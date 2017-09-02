@@ -63,6 +63,7 @@ delivermail(const char *from, const char *message)
 void
 checkformail(void)
 {
+#ifndef AIMAKE_BUILDOS_MSWin32
     char *box, *msg;
     FILE* mb;
     char curline[102];
@@ -120,5 +121,6 @@ checkformail(void)
 
     fclose(mb);
     unlink(box);
+#endif
     return;
 }
