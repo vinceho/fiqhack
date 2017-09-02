@@ -208,6 +208,9 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
         break;
     case WAN_UNDEAD_TURNING:
     case SPE_TURN_UNDEAD:
+        if (tseen)
+            known = TRUE;
+
         wake = FALSE;
         if (wandlevel >= P_BASIC && unturn_dead(mdef))
             wake = TRUE;
@@ -253,6 +256,7 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                 monkilled(magr, mdef, "", AD_RBRE);
         } else if (tseen)
             pline(msgc_yafm, "%s in dread.", M_verbs(mdef, "shudder"));
+
         break;
     case WAN_POLYMORPH:
     case SPE_POLYMORPH:
@@ -359,6 +363,7 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                     pline(msgc_statusheal, "%s opens its mouth!", Monnam(mdef));
             }
             expels(mdef, mdef->data, TRUE);
+            known = TRUE;
         } else if ((obj = which_armor(mdef, os_saddle))) {
             mdef->misc_worn_check &= ~obj->owornmask;
             obj->owornmask = 0L;
@@ -368,8 +373,11 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
             place_object(obj, level, mdef->mx, mdef->my);
             /* call stackobj() if we ever drop anything that can merge */
             newsym(mdef->mx, mdef->my);
-        } else if (hityou && Punished)
+            known = TRUE;
+        } else if (hityou && Punished) {
             pline(msgc_yafm, "Your chain quivers for a moment.");
+            known = TRUE;
+        }
         break;
     case SPE_HEALING:
     case SPE_EXTRA_HEALING:
