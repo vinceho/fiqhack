@@ -692,6 +692,7 @@ extern const char *hist_lev_name(const d_level * l, boolean in_or_on);
 extern void assigninvlet(struct obj *);
 extern struct obj *merge_choice(struct obj *, struct obj *);
 extern int merged(struct obj **, struct obj **);
+extern struct obj *pickinv(struct obj *);
 extern struct obj *addinv(struct obj *);
 extern boolean can_hold(struct obj *);
 extern struct obj *hold_another_object(struct obj *, const char *, const char *,
@@ -954,6 +955,7 @@ extern enum msg_channel combat_msgc(const struct monst *,
                                     const struct monst *,
                                     enum combatresult);
 extern int fightm(struct monst *);
+extern int damage(struct monst *, struct monst *, const struct attack *);
 extern int mattackm(struct monst *, struct monst *);
 extern int gazemm(struct monst *, struct monst *, const struct attack *);
 extern void mswingsm(struct monst *, struct monst *, struct obj *);
@@ -971,7 +973,10 @@ extern int mattackq(struct monst *, int, int);
 
 /* ### mhitu.c ### */
 
+extern void mhitmsg(struct monst *, struct monst *,
+                    const struct attack *);
 extern const char *mpoisons_subj(struct monst *, const struct attack *);
+extern void do_mercy(struct monst *, struct monst *, struct obj *, int);
 extern struct monst *cloneu(void);
 extern void expels(struct monst *, const struct permonst *, boolean);
 extern const struct attack *getmattk(const struct permonst *, int, int *,
@@ -1136,6 +1141,7 @@ extern int mcalcmove(struct monst *);
 extern void mcalcdistress(void);
 extern void replmon(struct monst *, struct monst *);
 extern void relmon(struct monst *);
+extern struct monst *dm_at(struct level *, xchar, xchar);
 extern struct obj *mlifesaver(struct monst *);
 extern boolean corpse_chance(struct monst *, struct monst *, boolean);
 extern void mondead(struct monst *);
@@ -1388,8 +1394,7 @@ extern int query_objlist(const char *, struct obj *, int, struct object_pick **,
 extern void add_objitem(struct nh_objlist *, enum nh_menuitem_role, int,
                         const char *, struct obj *, boolean);
 extern struct obj *pick_obj(struct obj *);
-extern void reset_encumber_msg(void);
-extern int encumber_msg(void);
+extern int encumber_msg(int);
 extern int doloot(const struct nh_cmd_arg *);
 extern void observe_quantum_cat(struct obj *);
 extern int use_container(struct obj *, int);
@@ -1877,6 +1882,7 @@ extern void seetrap(struct trap *);
 extern int mintrap(struct monst *);
 extern int instapetrify(const char *);
 extern int minstapetrify(struct monst *, struct monst *);
+extern int uminstapetrify(struct monst *, struct monst *, const char *);
 extern void mstiffen(struct monst *, struct monst *);
 extern void selftouch(const char *, const char *);
 extern void mselftouch(struct monst *, const char *, struct monst *);

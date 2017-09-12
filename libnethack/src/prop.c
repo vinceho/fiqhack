@@ -184,6 +184,16 @@ static const struct propxl prop_from_experience[] = {
     {PM_WIZARD, 15, WARNING},
     {PM_WIZARD, 17, TELEPORT_CONTROL},
     {PM_ELF, 4, SLEEP_RES},
+    {PM_RED_DRAGON, 10, INFRAVISION},
+    {PM_RED_DRAGON, 10, WARNING},
+    {PM_RED_DRAGON, 10, SEE_INVIS},
+    {PM_WHITE_DRAGON, 10, WATERPROOF},
+    {PM_WHITE_DRAGON, 10, SEARCHING},
+    {PM_ORANGE_DRAGON, 10, FREE_ACTION},
+    {PM_BLACK_DRAGON, 10, DRAIN_RES},
+    {PM_BLUE_DRAGON, 10, FAST},
+    {PM_GREEN_DRAGON, 10, SICK_RES},
+    /* Yellow dragons are acidic, so they have stone res already */
     {NON_PM, 0, 0}
 };
 
@@ -216,6 +226,7 @@ pm_has_property(const struct permonst *mdat, enum youprop property)
                                         mdat == &mons[PM_GREEN_SLIME]        :
         property == STONED            ? poly_when_stoned(mdat)               :
         property == GLIB              ? nohands(mdat)                        :
+        property == LIFESAVED         ? nonliving(mdat)                      :
         0)
         return -1;
 
@@ -963,6 +974,7 @@ update_property(struct monst *mon, enum youprop prop,
     boolean you = (mon == &youmonst);
     /* if something was said about the situation */
     boolean effect = FALSE;
+    boolean was_overprotected = !cast_protection(mon, FALSE, TRUE);
     int timer = property_timeout(mon, prop);
     struct obj *weapon;
     enum msg_channel msgc = msgc_monneutral;
@@ -1172,6 +1184,22 @@ update_property(struct monst *mon, enum youprop prop,
         }
         break;
     case PROTECTION:
+        while (slot == os_dectimeout && !cast_protection(mon, FALSE, TRUE)) {
+            if ((mon->mintrinsic[PROTECTION] & TIMEOUT_RAW) > 10)
+                mon->mintrinsic[PROTECTION] -= 10;
+            else {
+                mon->mintrinsic[PROTECTION] &= ~TIMEOUT_RAW;
+                break;
+            }
+        }
+
+        if (slot == os_dectimeout && was_overprotected && (you || vis)) {
+            pline(you ? msgc_statusbad : msgc_monneutral,
+                  "The %s haze around %s fades rapidly.", hcolor("golden"),
+                  mon_nam(mon));
+            effect = TRUE;
+        }
+
         if (you && slot == os_armc && !lost) {
             pline(msgc_intrgain,
                   "Your cloak feels unusually protective.");
@@ -2670,26 +2698,28 @@ enlighten_mon(struct monst *mon, int final)
             "the Glory of Arioch"
         };
         mon_is(&menu, mon, hofe_titles[u.uevent.uhand_of_elbereth - 1]);
-        if (u.ualign.record >= 20)
+        if (u.ualign.record >= AR_PIOUS)
             mon_is(&menu, mon, "piously aligned");
-        else if (u.ualign.record > 13)
+        else if (u.ualign.record >= AR_DEVOUT)
             mon_is(&menu, mon, "devoutly aligned");
-        else if (u.ualign.record > 8)
+        else if (u.ualign.record >= AR_FERVENT)
             mon_is(&menu, mon, "fervently aligned");
-        else if (u.ualign.record > 3)
+        else if (u.ualign.record >= AR_STRIDENT)
             mon_is(&menu, mon, "stridently aligned");
-        else if (u.ualign.record == 3)
+        else if (u.ualign.record == AR_OK)
             mon_is(&menu, mon, "aligned");
-        else if (u.ualign.record > 0)
+        else if (u.ualign.record >= AR_HALTING)
             mon_is(&menu, mon, "haltingly aligned");
-        else if (u.ualign.record == 0)
+        else if (u.ualign.record == AR_NOMINAL)
             mon_is(&menu, mon, "nominally aligned");
-        else if (u.ualign.record >= -3)
-            mon_is(&menu, mon, "strayed");
-        else if (u.ualign.record >= -8)
-            mon_is(&menu, mon, "sinned");
+        else if (u.ualign.record <= AR_TRANSGRESSED)
+            mon_has(&menu, mon, "transgressed");
+        else if (u.ualign.record <= AR_SINNED)
+            mon_has(&menu, mon, "sinned");
+        else if (u.ualign.record <= AR_STRAYED)
+            mon_has(&menu, mon, "strayed");
         else
-            mon_is(&menu, mon, "transgressed");
+            impossible("Unknown alignment threshould?");
         if (wizard) {
             buf = msgprintf(" %d", u.uhunger);
             enl_msg(&menu, "Hunger level ", "is", "was", buf);

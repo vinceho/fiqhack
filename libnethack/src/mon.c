@@ -1881,6 +1881,10 @@ replmon(struct monst *mtmp, struct monst *mtmp2)
         /* here we rely on the fact that `mtmp' hasn't actually been deleted */
         del_light_source(mtmp->dlevel, LS_MONSTER, mtmp);
     }
+
+    if (displaced(mtmp2))
+        mtmp2->dlevel->dmonsters[mtmp2->dx][mtmp2->dy] = mtmp2;
+
     mtmp2->nmon = mtmp2->dlevel->monlist;
     mtmp2->dlevel->monlist = mtmp2;
     if (u.ustuck == mtmp)
@@ -1894,6 +1898,19 @@ replmon(struct monst *mtmp, struct monst *mtmp2)
         nmtmp = mtmp2;
 
     /* discard the old monster */
+
+    /* Ensure that we /really remove/ any displaced image. Don't use dm_at. */
+    struct level *lev = mtmp->dlevel;
+    int x, y;
+    for (x = 0; x < COLNO; x++)
+        for (y = 0; y < COLNO; y++)
+            if (mtmp == lev->dmonsters[x][y]) {
+                impossible("Displacement removal failed! "
+                           "Displaced at: %d,%d :: Found at: %d,%d",
+                      mtmp->dx, mtmp->dy, x, y);
+                level->dmonsters[x][y] = NULL;
+            }
+
     dealloc_monst(mtmp);
 }
 
@@ -1906,6 +1923,7 @@ relmon(struct monst *mon)
     if (mon->dlevel->monlist == NULL)
         panic("relmon: no level->monlist available.");
 
+    mon->dlevel->dmonsters[mon->dx][mon->dy] = NULL;
     mon->dlevel->monsters[mon->mx][mon->my] = NULL;
 
     if (mon == mon->dlevel->monlist)
@@ -1953,16 +1971,34 @@ m_detach(struct monst *mtmp, const struct permonst *mptr)
     mtmp->dlevel->flags.purge_monsters++;
 }
 
+struct monst *
+dm_at(struct level *lev, xchar x, xchar y)
+{
+    struct monst *mon = lev->dmonsters[x][y];
+    if (!mon)
+        return NULL;
+
+    if (mon->dx != x || mon->dy != y) {
+        impossible("Displacement mismatch: dx,dy: %d,%d :: actual x,y: %d,%d",
+                   mon->dx, mon->dy, x, y);
+        unset_displacement(mon);
+        level->dmonsters[x][y] = NULL;
+        return NULL;
+    }
+
+    return mon;
+}
+
 /* find the worn amulet of life saving which will save a monster */
 struct obj *
 mlifesaver(struct monst *mon)
 {
-    if (!nonliving(mon->data)) {
-        struct obj *otmp = which_armor(mon, os_amul);
+    if (!will_be_lifesaved(mon))
+        return NULL;
 
-        if (otmp && otmp->otyp == AMULET_OF_LIFE_SAVING)
-            return otmp;
-    }
+    struct obj *otmp = which_armor(mon, os_amul);
+    if (otmp && otmp->otyp == AMULET_OF_LIFE_SAVING)
+        return otmp;
     return NULL;
 }
 
@@ -2363,7 +2399,8 @@ monkilled(struct monst *magr, struct monst *mdef, const char *fltxt, int how)
     if (magr == &youmonst) {
         xkilled(mdef, xkill);
         return;
-    }
+    } else if (magr)
+        grow_up(magr, mdef);
 
     if (xkill & 2)
         mondead(mdef); /* no corpse */
@@ -2843,6 +2880,7 @@ poisoned(struct monst *mon, const char *string, int typ, const char *killer,
     int i, plural;
     boolean thrown_weapon = (permanent < 0);
     boolean resist_message_printed = FALSE;
+    int oldcap = near_capacity();
 
     if (thrown_weapon)
         permanent = -permanent;
@@ -2925,7 +2963,7 @@ poisoned(struct monst *mon, const char *string, int typ, const char *killer,
     }
 
     if (you)
-        encumber_msg();
+        encumber_msg(oldcap);
 }
 
 /* monster responds to player action; not the same as a passive attack */

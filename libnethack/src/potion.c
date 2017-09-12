@@ -1851,6 +1851,7 @@ dodip(const struct nh_cmd_arg *arg)
 {
     struct obj *obj, *potion;
     struct obj *singlepotion;
+    boolean allowfloor = FALSE;
     const char *tmp;
     uchar here;
     char allowall[2] = { ALL_CLASSES, 0 };
@@ -1865,49 +1866,33 @@ dodip(const struct nh_cmd_arg *arg)
     if (!obj)
         return 0;
 
-    if (!(arg->argtype & CMD_ARG_OBJ)) {
-        here = level->locations[u.ux][u.uy].typ;
-        /* Is there a fountain to dip into here? */
-        if (IS_FOUNTAIN(here)) {
-            qbuf = msgprintf("Dip %s into the fountain?",
-                             safe_qbuf("", sizeof ("Dip  into the fountain?"),
-                                       the(xname(obj)),
-                                       the(simple_typename(obj->otyp)),
-                                       "this item"));
-            if (yn(qbuf) == 'y') {
-                dipfountain(obj);
-                return 1;
-            }
-        } else if (is_pool(level, u.ux, u.uy)) {
-            tmp = waterbody_name(u.ux, u.uy);
-            qbuf = msgprintf("Dip %s into the %s?",
-                             safe_qbuf("",
-                                       sizeof ("Dip  into the pool of water?"),
-                                       the(xname(obj)),
-                                       the(simple_typename(obj->otyp)),
-                                       "this item"), tmp);
-            if (yn(qbuf) == 'y') {
-                /* TODO: There are unmarked msgc_cancelled1 cases here. */
-                if (Levitation) {
-                    floating_above(tmp);
-                } else if (u.usteed && !swims(u.usteed) &&
-                           P_SKILL(P_RIDING) < P_BASIC) {
-                    rider_cant_reach(); /* not skilled enough to reach */
-                } else {
-                    water_damage(obj, NULL, TRUE);
-                    if (obj->otyp == POT_ACID)
-                        useup(obj);
-                }
-                return 1;
-            }
-        }
-    }
+    here = level->locations[u.ux][u.uy].typ;
+    /* Is there a fountain or pool to dip into here? */
+    if ((IS_FOUNTAIN(here) || is_pool(level, u.ux, u.uy)) &&
+        !Levitation &&
+        !(u.usteed && !swims(u.usteed) &&
+          P_SKILL(P_RIDING) < P_BASIC &&
+          is_pool(level, u.ux, u.uy)))
+        allowfloor = TRUE;
+
     qbuf = msgprintf("dip %s into",
                      safe_qbuf("", sizeof ("dip  into"), the(xname(obj)),
                                the(simple_typename(obj->otyp)), "this item"));
-    potion = getargobj(arg, beverages, qbuf);
+    potion = getargobj(arg, allowfloor ? beverages_and_fountains :
+                       beverages, qbuf);
     if (!potion)
         return 0;
+
+    if (potion == &zeroobj) {
+        if (IS_FOUNTAIN(here))
+            dipfountain(obj);
+        else {
+            water_damage(obj, NULL, TRUE);
+            if (obj->otyp == POT_ACID)
+                useup(obj);
+        }
+        return 1;
+    }
 
     if (potion == obj && potion->quan == 1L) {
         pline(msgc_cancelled, "That is a potion bottle, not a Klein bottle!");
@@ -2000,6 +1985,102 @@ dodip(const struct nh_cmd_arg *arg)
         }
         potion->in_use = FALSE; /* didn't go poof */
         return 1;
+    } else if (potion->otyp == POT_WONDER) {
+        potion->in_use = TRUE;
+        boolean vis = !Blind;
+        boolean did_anything = FALSE;
+        int current_props = obj->oprops;
+        int prop = 0;
+
+        /*
+         * Cursed: Remove a property.
+         * Uncursed: Try to add a random (valid) property once, potentially redundant.
+         * Blessed: If we can, always add a new property.
+         * For noncursed potions, there is a 1-1/<amount of properties + 1> chance of
+         * removing all the properties instead, and a new property is only attempted
+         * 1/<amount of properties + 1> of the time.
+         */
+        if (potion->cursed) {
+            if (obj->oprops) {
+                do {
+                    prop = rn2(32);
+                    prop = 1 << prop;
+                    obj->oprops &= ~prop;
+                } while (obj->oprops == current_props);
+
+                if (vis)
+                    pline(msgc_itemloss, "%s %s in a %s light.", Shk_Your(obj),
+                          aobjnam(obj, "glow"), hcolor("purple"));
+                did_anything = TRUE;
+            }
+        } else {
+            /* Only try to add a property 1/<existing properties + 1> of the time. */
+            int prop_amount = 0;
+            prop = 1;
+            while (prop <= opm_all) {
+                if (obj->oprops & prop)
+                    prop_amount++;
+                prop <<= 1;
+            }
+
+            /* Check if we can add anything by comparing properties valid after opm_all
+               filtering with current properties. Don't consider frost if we have fire
+               or vice versa. */
+            obj->oprops = opm_all;
+            obj->oprops = obj_properties(obj);
+            if (obj->oprops & (opm_fire | opm_frost))
+                obj->oprops |= (opm_fire | opm_frost);
+
+            if (current_props & (opm_fire | opm_frost)) {
+                obj->oprops &= ~opm_fire;
+                obj->oprops &= ~opm_frost;
+                obj->oprops |= current_props;
+            }
+
+            int valid_props = obj->oprops;
+            obj->oprops = current_props;
+
+            if (rn2(prop_amount + 1)) {
+                /* Uh-oh... */
+                obj->oprops = 0;
+                pline(msgc_itemloss, "%s %s in a %s light, and then you feel a loss of "
+                      "power!", Shk_Your(obj), aobjnam(obj, "violently glow"),
+                      hcolor("golden"));
+                did_anything = TRUE;
+            } else if (!rn2(prop_amount + 1) && current_props != valid_props) {
+                /* Add a property! */
+                do {
+                    prop = 0;
+                    while (!(prop & valid_props)) {
+                        prop = rn2(32);
+                        prop = 1 << prop;
+                    }
+
+                    obj->oprops |= prop;
+                    obj->oprops = obj_properties(obj);
+                } while (potion->blessed && obj->oprops == current_props);
+
+                boolean newprop = (obj->oprops != current_props);
+                if (vis)
+                    pline(newprop ? msgc_failrandom : msgc_itemrepair,
+                          "%s %s in a %s light%s.", Shk_Your(obj),
+                          aobjnam(obj, "glow"), hcolor("golden"),
+                          newprop ? "" : " for a moment");
+                did_anything = TRUE;
+            } else if (current_props != valid_props) {
+                /* Nothing happens */
+                obj->oprops = current_props;
+                pline(msgc_failrandom, "Nothing seems to happen.");
+                did_anything = TRUE;
+            }
+
+            if (did_anything) {
+                makeknown(POT_WONDER);
+                useup(potion);
+                return 1;
+            } else
+                potion->in_use = FALSE;
+        }
     } else if (obj->oclass == POTION_CLASS && obj->otyp != potion->otyp) {
         /* Mixing potions is dangerous... */
         pline(msgc_occstart, "The potions mix...");

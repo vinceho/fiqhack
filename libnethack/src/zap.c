@@ -729,6 +729,8 @@ montraits(struct obj *obj, coord * cc)
         mtmp2->dlevel = level;
         mtmp2->mx = mtmp->mx;
         mtmp2->my = mtmp->my;
+        mtmp2->dx = mtmp->dx;
+        mtmp2->dy = mtmp->dy;
         mtmp2->mux = COLNO;
         mtmp2->muy = ROWNO;
         mtmp2->mw = mtmp->mw;
@@ -2163,6 +2165,8 @@ static boolean
 zap_steed(struct obj *obj)
 {
     int steedhit = FALSE;
+    int ox = u.ux;
+    int oy = u.uy;
 
     switch (obj->otyp) {
 
@@ -2180,8 +2184,7 @@ zap_steed(struct obj *obj)
     case SPE_TELEPORT_AWAY:
         /* you go together */
         tele();
-        if (Teleport_control || !couldsee(u.ux0, u.uy0) ||
-            (distu(u.ux0, u.uy0) >= 16))
+        if (Teleport_control || (ox != u.ux && oy != u.uy))
             makeknown(obj->otyp);
         steedhit = TRUE;
         break;

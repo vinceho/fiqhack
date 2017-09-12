@@ -15,7 +15,6 @@ static int passiveum(const struct permonst *, struct monst *,
 static void mayberem(struct obj *, const char *);
 
 static boolean diseasemu(const struct permonst *, const char *);
-static void do_mercy(struct monst *, struct obj *, int);
 static int hitmu(struct monst *, const struct attack *);
 static int gulpmu(struct monst *, const struct attack *);
 static int explmu(struct monst *, const struct attack *);
@@ -26,7 +25,71 @@ static void hitmsg(struct monst *, const struct attack *);
 /* changed to a parameter to mhitu. */
 static int dieroll;
 
+void
+mhitmsg(struct monst *magr, struct monst *mdef,
+        const struct attack *mattk)
+{
+    int compat;
+    const char *target;
+    boolean uagr = (magr == &youmonst);
+    boolean udef = (mdef == &youmonst);
+    boolean vis = (uagr || udef ||
+                   cansee(magr->mx, magr->my) ||
+                   cansee(mdef->mx, mdef->my));
+    if (!vis)
+        return;
 
+    target = "";
+    if (!udef)
+        target = msgcat(" ", mon_nam(mdef));
+
+    /* Note: if opposite gender, "seductively" */
+    /* If same gender, "engagingly" for nymph, normal msg for others */
+    if ((compat = could_seduce(magr, mdef, mattk))
+        && !cancelled(magr) && !magr->mspec_used) {
+        pline(combat_msgc(magr, mdef, cr_hit),
+              "%s %s %s %s.", M_verbs(magr, !uagr && Blind ? "talk" : "smile"),
+              !uagr && Blind ? "to" : "at", mon_nam(mdef),
+              compat == 2 ? "engagingly" : "seductively");
+    } else
+        switch (mattk->aatyp) {
+        case AT_BITE:
+            pline(combat_msgc(magr, mdef, cr_hit),
+                  "%s%s!", M_verbs(magr, "bite"), target);
+            break;
+        case AT_KICK:
+            pline(combat_msgc(magr, mdef, cr_hit),
+                  "%s%s%c", M_verbs(magr, "kick"), target,
+                  thick_skinned(mdef->data) ? '.' : '!');
+            break;
+        case AT_STNG:
+            pline(combat_msgc(magr, mdef, cr_hit),
+                  "%s%s!", M_verbs(magr, "sting"), target);
+            break;
+        case AT_BUTT:
+            pline(combat_msgc(magr, mdef, cr_hit),
+                  "%s%s!", M_verbs(magr, "butt"), target);
+            break;
+        case AT_TUCH:
+            pline(combat_msgc(magr, mdef, cr_hit),
+                  "%s %s!", M_verbs(magr, "touch"),
+                  mon_nam(mdef));
+            break;
+        case AT_TENT:
+            pline(combat_msgc(magr, mdef, cr_hit),
+                  "%s tentacles suck %s!", s_suffix(Monnam(magr)),
+                  mon_nam(mdef));
+            break;
+        case AT_EXPL:
+        case AT_BOOM:
+            pline(combat_msgc(magr, mdef, cr_hit),
+                  "%s!", M_verbs(magr, "explode"));
+            break;
+        default:
+            pline(combat_msgc(magr, mdef, cr_hit),
+                  "%s%s!", M_verbs(magr, "hit"), target);
+        }
+}
 
 static void
 hitmsg(struct monst *mtmp, const struct attack *mattk)
@@ -858,112 +921,17 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
             dmg = 0;
         break;
     case AD_MAGM:
-        hitmsg(mtmp, mattk);
-        if (!cancelled(mtmp)) {
-            pline(combat_msgc(mtmp, &youmonst, cr_hit),
-                  "You're hit by a shower of missiles!");
-            if (resists_magm(&youmonst)) {
-                pline(combat_msgc(mtmp, &youmonst, cr_immune),
-                      "The missiles bounce off!");
-                dmg = 0;
-            }
-        } else
-            dmg = 0;
-        break;
     case AD_FIRE:
-        hitmsg(mtmp, mattk);
-        if (uncancelled) {
-            if (youmonst.data == &mons[PM_STRAW_GOLEM] ||
-                youmonst.data == &mons[PM_PAPER_GOLEM]) {
-                pline(msgc_statusend, "You roast!");
-                rehumanize(BURNING, msgcat("roasted to death by ",
-                                           k_monnam(mtmp)));
-                break;
-            } else if (Fire_resistance) {
-                pline(msgc_playerimmune,
-                      "You're on fire, but it's not that hot.");
-                dmg = 0;
-            } else {
-                pline(combat_msgc(mtmp, &youmonst, cr_hit),
-                      "You're %s!", on_fire(youmonst.data, mattk));
-            }
-            if ((int)mtmp->m_lev > rn2(20))
-                destroy_mitem(&youmonst, SCROLL_CLASS, AD_FIRE);
-            if ((int)mtmp->m_lev > rn2(20))
-                destroy_mitem(&youmonst, POTION_CLASS, AD_FIRE);
-            if ((int)mtmp->m_lev > rn2(25))
-                destroy_mitem(&youmonst, SPBOOK_CLASS, AD_FIRE);
-            burn_away_slime(&youmonst);
-        } else
-            dmg = 0;
-        break;
     case AD_COLD:
-        hitmsg(mtmp, mattk);
-        if (uncancelled) {
-            if (Cold_resistance) {
-                pline(msgc_playerimmune,
-                      "You're covered in frost, but it doesn't seem cold.");
-                dmg = 0;
-            } else
-                pline(combat_msgc(mtmp, &youmonst, cr_hit),
-                      "You're covered in frost!");
-            if ((int)mtmp->m_lev > rn2(20))
-                destroy_mitem(&youmonst, POTION_CLASS, AD_COLD);
-        } else
-            dmg = 0;
-        break;
     case AD_ELEC:
-        hitmsg(mtmp, mattk);
-        if (uncancelled) {
-            if (Shock_resistance) {
-                pline(msgc_playerimmune, "You get zapped, but aren't shocked.");
-                dmg = 0;
-            } else
-                pline(combat_msgc(mtmp, &youmonst, cr_hit), "You get zapped!");
-            if ((int)mtmp->m_lev > rn2(20))
-                destroy_mitem(&youmonst, WAND_CLASS, AD_ELEC);
-        } else
-            dmg = 0;
-        break;
     case AD_SLEE:
-        hitmsg(mtmp, mattk);
-        if (uncancelled && !u_helpless(hm_all) && !rn2(5)) {
-            if (Sleep_resistance)
-                break;
-            helpless(rnd(10), hr_asleep, "sleeping", NULL);
-            if (Blind) /* TODO: should be cansee check? */
-                pline(msgc_statusbad, "You are put to sleep!");
-            else
-                pline(msgc_statusbad, "You are put to sleep by %s!",
-                      mon_nam(mtmp));
-        }
-        break;
-    case AD_BLND:
-        if (can_blnd(mtmp, &youmonst, mattk->aatyp, NULL)) {
-            if (!Blind)
-                pline(msgc_statusbad, "%s blinds you!", Monnam(mtmp));
-            inc_timeout(&youmonst, BLINDED, dmg, TRUE);
-            if (!blind(&youmonst))
-                pline(msgc_statusheal, "Your vision quickly clears.");
-        }
-        dmg = 0;
-        break;
     case AD_DRST:
-        ptmp = A_STR;
-        goto dopois;
     case AD_DRDX:
-        ptmp = A_DEX;
-        goto dopois;
     case AD_DRCO:
-        ptmp = A_CON;
-    dopois:
-        hitmsg(mtmp, mattk);
-        if (uncancelled && !rn2(8)) {
-            poisoned(&youmonst, msgprintf("%s %s", s_suffix(Monnam(mtmp)),
-                                          mpoisons_subj(mtmp, mattk)),
-                     ptmp, killer_msg_mon(POISONING, mtmp), 30);
-        }
-        break;
+    case AD_ACID:
+    case AD_BLND:
+        damage(mtmp, &youmonst, mattk);
+        return 1;
     case AD_DRIN:
         /* Note about message channels: this is one of the most common ways I
            die, so treat any amount of intelligence drain as a potential
@@ -987,7 +955,7 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
         if (Half_physical_damage)
             dmg = (dmg + 1) / 2;
         if (mercy)
-            do_mercy(mtmp, otmp, dmg);
+            do_mercy(mtmp, &youmonst, otmp, dmg);
         else
             mdamageu(mtmp, dmg);
 
@@ -1408,20 +1376,6 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
             dmg /= 2;
         }
         break;
-    case AD_ACID:
-        hitmsg(mtmp, mattk);
-        if (!cancelled(mtmp) && !rn2(3))
-            if (Acid_resistance) {
-                pline(combat_msgc(mtmp, &youmonst, cr_immune),
-                      "You're covered in acid, but it seems harmless.");
-                dmg = 0;
-            } else {
-                pline(combat_msgc(mtmp, &youmonst, cr_hit),
-                      "You're covered in acid! It burns!");
-                exercise(A_STR, FALSE);
-        } else
-            dmg = 0;
-        break;
     case AD_SLOW:
         hitmsg(mtmp, mattk);
         if (uncancelled && !defends(AD_SLOW, uwep) && !rn2(4))
@@ -1614,7 +1568,7 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
         }
 
         if (mercy)
-            do_mercy(mtmp, otmp, dmg);
+            do_mercy(mtmp, &youmonst, otmp, dmg);
         else
             mdamageu(mtmp, dmg);
     }
@@ -1684,7 +1638,7 @@ gulpmu(struct monst *mtmp, const struct attack *mattk)
             place_monster(mtmp, u.ux, u.uy, TRUE);
             if (Punished)
                 placebc();
-            minstapetrify(mtmp, &youmonst);
+            minstapetrify(&youmonst, mtmp);
             if (!DEADMONSTER(mtmp))
                 return 0;
             else
@@ -1948,12 +1902,25 @@ explmu(struct monst *mtmp, const struct attack *mattk)
 }
 
 
-static void
-do_mercy(struct monst *magr, struct obj *obj, int dmg)
+void
+do_mercy(struct monst *magr, struct monst *mdef,
+         struct obj *obj, int dmg)
 {
+    boolean uagr = (magr == &youmonst);
+    boolean udef = (mdef == &youmonst);
+    boolean vis = (uagr || udef ||
+                   cansee(magr->mx, magr->my) ||
+                   cansee(mdef->mx, mdef->my));
     boolean restored_hp = FALSE;
     boolean saw_something = FALSE;
-    if (Upolyd) {
+    if (mdef != &youmonst) {
+        if (mdef->mhp < mdef->mhpmax) {
+            mdef->mhp += dmg;
+            if (mdef->mhp > mdef->mhpmax)
+                mdef->mhp = mdef->mhpmax;
+            restored_hp = TRUE;
+        }
+    } else if (Upolyd) {
         if (u.mh < u.mhmax) {
             u.mh += dmg;
             if (u.mh > u.mh)
@@ -1969,8 +1936,8 @@ do_mercy(struct monst *magr, struct obj *obj, int dmg)
         }
     }
 
-    if (restored_hp) {
-        pline(msgc_statusgood, "You are healed!");
+    if (restored_hp && vis) {
+        pline(msgc_statusgood, "%s healed!", M_verbs(mdef, "are"));
         saw_something = TRUE;
     }
 
@@ -1979,7 +1946,7 @@ do_mercy(struct monst *magr, struct obj *obj, int dmg)
         obj->mbknown = 1;
 
         if (!obj->cursed) {
-            if (canseemon(magr)) {
+            if (uagr || canseemon(magr)) {
                 pline(msgc_monneutral, "%s %s for a moment.",
                       Tobjnam(obj, "glow"), hcolor("black"));
                 saw_something = TRUE;
