@@ -99,9 +99,11 @@ inven_inuse(boolean quietly)
 
     for (otmp = invent; otmp; otmp = otmp2) {
         otmp2 = otmp->nobj;
-        if (otmp->in_use)
-            panic("in_use set for %s at neutral turnstate",
-                  killer_xname(otmp));
+        if (otmp->in_use) {
+            if (!quietly)
+                impossible("obj %s inuse was set in neutral turnstate?", xname(otmp));
+            useup(otmp);
+        }
     }
 }
 
@@ -799,7 +801,9 @@ restore_flags(struct memfile *mf, struct flag *f)
     f->made_amulet = mread8(mf);
     f->menu_style = mread8(mf);
     f->mon_generation = mread8(mf);
-    f->mon_moving = mread8(mf);
+    int moving = mread8(mf);
+    if (moving)
+        raw_printf("old mon_moving was nonzero -- please report to FIQ");
     f->mon_polycontrol = mread8(mf);
     f->occupation = mread8(mf);
     f->permablind = mread8(mf);
@@ -922,12 +926,6 @@ dorecover(struct memfile *mf)
     for (otmp = level->objlist; otmp; otmp = otmp->nobj)
         if (otmp->owornmask)
             setworn(otmp, otmp->owornmask);
-    /*
-     * in_use processing must be after:
-     * + The inventory has been read so that freeinv() works.
-     * + The current level has been restored so billing information is
-     *   available. */
-    inven_inuse(FALSE);
 
     load_qtlist();      /* re-load the quest text info */
 

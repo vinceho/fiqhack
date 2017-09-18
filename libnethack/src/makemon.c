@@ -995,6 +995,8 @@ makemon(const struct permonst *ptr, struct level *lev, int x, int y,
         mtmp->mtrapseen |= (1L << (MAGIC_PORTAL - 1));
 
     mtmp->dlevel = lev;
+    mtmp->dx = COLNO;
+    mtmp->dy = ROWNO;
     place_monster(mtmp, x, y, FALSE);
     mtmp->mcanmove = TRUE;
     /* In sokoban, peaceful monsters are generally worse for the player
@@ -1163,8 +1165,6 @@ makemon(const struct permonst *ptr, struct level *lev, int x, int y,
     if (!in_mklev && lev == level)
         newsym(mtmp->mx, mtmp->my);     /* make sure the mon shows up */
 
-    mtmp->dx = COLNO;
-    mtmp->dy = ROWNO;
     memset(mtmp->mintrinsic, 0, sizeof (mtmp->mintrinsic));
     mtmp->mhitinc = 0;
     mtmp->mdaminc = 0;
@@ -2261,9 +2261,10 @@ restore_mon(struct memfile *mf, struct monst *mtmp, struct level *l)
     if (legacy < 1) {
         mon->spells_maintained = mread64(mf);
         mon->former_player = mread16(mf);
+        mon->mstuck = mread32(mf);
 
         /* Some reserved space for further expansion */
-        for (i = 0; i < 198; i++)
+        for (i = 0; i < 194; i++)
             (void) mread8(mf);
     }
 
@@ -2552,8 +2553,9 @@ save_mon(struct memfile *mf, const struct monst *mon, const struct level *l)
     mwrite64(mf, mon->mspells);
     mwrite64(mf, mon->spells_maintained);
     mwrite16(mf, mon->former_player);
+    mwrite32(mf, mon->mstuck);
 
-    for (i = 0; i < 198; i++)
+    for (i = 0; i < 194; i++)
         mwrite8(mf, 0);
 
     /* just mark that the pointers had values */

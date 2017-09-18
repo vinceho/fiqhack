@@ -173,7 +173,7 @@ save_flags(struct memfile *mf)
     mwrite8(mf, flags.made_amulet);
     mwrite8(mf, flags.menu_style);
     mwrite8(mf, flags.mon_generation);
-    mwrite8(mf, flags.mon_moving);
+    mwrite8(mf, 0);
     mwrite8(mf, flags.mon_polycontrol);
     mwrite8(mf, flags.occupation);
     mwrite8(mf, flags.permablind);
@@ -211,6 +211,8 @@ save_flags(struct memfile *mf)
     mwrite8(mf, flags.servermail);
     mwrite8(mf, flags.autoswap);
     mwrite32(mf, flags.last_arg.key);
+    if (flags.mon_moving)
+        panic("flags.mon_moving is nonzero during neutral turnstate?");
 
     /* Padding to allow options to be added without breaking save compatibility;
        add new options just before the padding, then remove the same amount of
@@ -309,6 +311,8 @@ savegamestate(struct memfile *mf)
     /* must come before migrating_objs and migrating_mons are freed */
     save_timers(mf, level, RANGE_GLOBAL);
     save_light_sources(mf, level, RANGE_GLOBAL);
+
+    inven_inuse(FALSE);
 
     saveobjchn(mf, invent);
     savemonchn(mf, migrating_mons, NULL);
