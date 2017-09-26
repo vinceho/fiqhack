@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2016-02-17 */
+/* Last modified by Fredrik Ljungdahl, 2017-09-26 */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -588,10 +588,14 @@ extern void make_grave(struct level *lev, int x, int y, const char *str);
 extern int experience(struct monst *, int);
 extern void more_experienced(int, int);
 extern void losexp(const char *killer, boolean overrid_res);
+extern void mlosexp(struct monst *, struct monst *,
+                    const char *killer, boolean overrid_res);
 extern void newexplevel(void);
 extern void pluslvl(boolean);
 extern long rndexp(boolean);
 extern long newuexp(int);
+extern void initialize_mon_pw(struct monst *);
+extern const struct permonst *grow_up(struct monst *, struct monst *);
 
 /* ### explode.c ### */
 
@@ -662,7 +666,8 @@ extern void lookaround(enum u_interaction_mode);
 extern int monster_nearby(void);
 extern void losehp(int, const char *);
 extern int weight_cap(void);
-extern int inv_weight(void);
+extern int inv_weight_over_cap(void);
+extern int inv_weight_total(void);
 extern int near_capacity(void);
 extern int calc_capacity(int);
 extern int max_capacity(void);
@@ -858,7 +863,6 @@ extern void save_rndmonst_state(struct memfile *mf);
 extern void restore_rndmonst_state(struct memfile *mf);
 extern const struct permonst *mkclass(const d_level *dlev, char, int, enum rng);
 extern int adj_lev(const d_level *dlev, const struct permonst *ptr);
-extern const struct permonst *grow_up(struct monst *, struct monst *);
 extern int mongets(struct monst *, int, enum rng);
 extern int golemhp(int);
 extern boolean peace_minded(const struct permonst *);
@@ -1223,6 +1227,7 @@ extern short mprof(const struct monst *, int);
 
 extern boolean itsstuck(struct monst *);
 extern boolean mb_trapped(struct monst *);
+extern int regen_rate(const struct monst *, boolean);
 extern int regeneration_by_rate(int);
 extern void mon_regen(struct monst *, boolean);
 extern int dochugw(struct monst *);
@@ -1917,7 +1922,7 @@ extern void u_init_inv_skills(void);
 extern void check_caitiff(struct monst *);
 extern schar find_roll_to_hit(struct monst *);
 extern enum attack_check_status attack(struct monst *, schar, schar, boolean);
-extern boolean hmon(struct monst *, struct obj *, int);
+extern boolean hmon(struct monst *, struct obj *, int, int);
 extern int damageum(struct monst *, const struct attack *);
 extern void missum(struct monst *, const struct attack *);
 extern int passive(struct monst *, boolean, int, uchar);
@@ -2028,6 +2033,7 @@ extern char query_key(const char *query, enum nh_query_key_flags flags,
 extern const char *getlin(const char *query, boolean isarg);
 extern const char *show_ac(const char *, int);
 extern const char *friendly_key(const char *, int);
+extern const char *implied_uncursed(const char *);
 extern int display_menu(struct nh_menulist *, const char *, int, int,
                         const int **);
 extern int display_objects(struct nh_objlist *, const char *, int, int,

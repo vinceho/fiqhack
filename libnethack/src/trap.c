@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2016-02-17 */
+/* Last modified by Alex Smith, 2017-06-29 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -1138,7 +1138,7 @@ dotrap(struct trap *trap, unsigned trflags)
             losehp(rnd(10), killer_msg(DIED, "a magical explosion"));
             pline_implied(msgc_intrgain,
                           "Your body absorbs some of the magical energy!");
-            u.uen = (u.uenmax += 2);
+            youmonst.pw = (youmonst.pwmax += 2);
             if (cancelled(&youmonst)) {
                 set_property(&youmonst, CANCELLED, -2, TRUE);
                 pline(msgc_statusgood,
@@ -2211,7 +2211,7 @@ mintrap(struct monst *mtmp)
                     pline(msgc_monneutral,
                           "%s body absorbs some of the magical energy!",
                           s_suffix(Monnam(mtmp)));
-                mtmp->mspec_used = 0;
+                mtmp->pw = (mtmp->pwmax += 2);
                 if (cancelled(mtmp)) {
                     set_property(mtmp, CANCELLED, -2, TRUE);
                     if (see_it)
@@ -3376,16 +3376,16 @@ crawl:
 void
 drain_en(int n)
 {
-    if (!u.uenmax)
+    if (!youmonst.pwmax)
         return;
-    pline(n > u.uen ? msgc_intrloss : msgc_statusbad,
+    pline(n > youmonst.pw ? msgc_intrloss : msgc_statusbad,
           "You feel your magical energy drain away!");
-    u.uen -= n;
-    if (u.uen < 0) {
-        u.uenmax += u.uen;
-        if (u.uenmax < 0)
-            u.uenmax = 0;
-        u.uen = 0;
+    youmonst.pw -= n;
+    if (youmonst.pw < 0) {
+        youmonst.pwmax += youmonst.pw;
+        if (youmonst.pwmax < 0)
+            youmonst.pwmax = 0;
+        youmonst.pw = 0;
     }
 }
 
@@ -3516,7 +3516,7 @@ try_disarm(struct trap *ttmp, boolean force_failure, schar dx, schar dy)
     /* duplicate tight-space checks from test_move */
     if (dx && dy && bad_rock(&youmonst, u.ux, ttmp->ty) &&
         bad_rock(&youmonst, ttmp->tx, u.uy)) {
-        if ((invent && (inv_weight() + weight_cap() > 600)) ||
+        if ((invent && (inv_weight_total() > 600)) ||
             bigmonst(youmonst.data)) {
             /* don't allow untrap if they can't get thru to it */
             pline(msgc_cancelled, "You are unable to reach the %s!",
@@ -3803,7 +3803,7 @@ help_monster_out(struct monst *mtmp, struct trap *ttmp)
     }
 
     /* is the monster too heavy? */
-    wt = inv_weight() + mtmp->data->cwt;
+    wt = inv_weight_over_cap() + mtmp->data->cwt;
     if (!try_lift(mtmp, ttmp, wt, FALSE))
         return 1;
 
