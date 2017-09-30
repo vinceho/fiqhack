@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-09-26 */
+/* Last modified by Fredrik Ljungdahl, 2017-09-29 */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -68,6 +68,7 @@ struct you;
 extern void startup_common(boolean);
 extern void action_incomplete(const char *gerund, enum occupation occupation);
 extern void action_interrupted(void);
+extern void interrupt_occupation(enum occupation_mask);
 extern void action_completed(void);
 extern void one_occupation_turn(int (*)(void), const char *, enum occupation);
 extern void helpless(int turns, enum helpless_reason reason, const char *cause,
@@ -810,6 +811,8 @@ extern int doclose(const struct nh_cmd_arg *);
 
 /* ### log.c ### */
 
+extern noreturn void error_reading_save(const char *);
+extern void base64_encode(const char *, char *);
 extern void log_newgame(microseconds);
 extern void log_neutral_turnstate(void);
 extern void log_backup_save(void);
