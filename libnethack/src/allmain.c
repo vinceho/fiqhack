@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-09-26 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-10 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -870,35 +870,42 @@ you_moved(void)
             if (u.ublesscnt)
                 u.ublesscnt--;
 
-            /* One possible result of prayer is healing. Whether or not you get
-               healed depends on your current hit points. If you are allowed to
-               regenerate during the prayer, the end-of-prayer calculation
-               messes up on this. Another possible result is rehumanization,
-               which requires that encumbrance and movement rate be
-               recalculated. */
             int *hp = &(u.uhp);
             int *hpmax = &(u.uhpmax);
             if (flags.polyinit_mnum != -1) {
                 hp = &(u.mh);
                 hpmax = &(u.mhmax);
             }
+
+            /* Check if we just reestored HP and Pw to full. If we did,
+               give a message if we were resting (waiting/searching). */
+            boolean hpfull = (*hp == *hpmax);
+            boolean hprestored = FALSE;
+            boolean pwfull = (youmonst.pw == youmonst.pwmax);
+            boolean pwrestored = FALSE;
+
+            /* One possible result of prayer is healing. Whether or not you get
+               healed depends on your current hit points. If you are allowed to
+               regenerate during the prayer, the end-of-prayer calculation
+               messes up on this. Another possible result is rehumanization,
+               which requires that encumbrance and movement rate be
+               recalculated. */
             if (u.uinvulnerable) {
                 /* for the moment at least, you're in tiptop shape */
                 wtcap = UNENCUMBERED;
             } else if (Upolyd && youmonst.data->mlet == S_EEL &&
                        !is_pool(level, u.ux, u.uy) && !Is_waterlevel(&u.uz)) {
-                if (u.mh > 1) {
-                    u.mh--;
-                } else if (u.mh < 1)
+                if (*hp > 1)
+                    (*hp)--;
+                else if (*hp < 1)
                     rehumanize(DIED, NULL);
             } else if (flags.polyinit_mnum == -1 &&
-                       Upolyd && u.mh < u.mhmax) {
-                if (u.mh < 1)
+                       Upolyd && *hp < *hpmax) {
+                if (*hp < 1)
                     rehumanize(DIED, NULL);
                 else if (Regeneration ||
-                         (wtcap < MOD_ENCUMBER && !(moves % 20))) {
-                    u.mh++;
-                }
+                         (wtcap < MOD_ENCUMBER && !(moves % 20)))
+                    (*hp)++;
             } else if (*hp < *hpmax &&
                        (wtcap < MOD_ENCUMBER || !u.umoved || Regeneration)) {
                 *hp += regeneration_by_rate(regen_rate(&youmonst,
@@ -928,6 +935,21 @@ you_moved(void)
                     regeneration_by_rate(regen_rate(&youmonst, TRUE));
                 if (youmonst.pw > youmonst.pwmax)
                     youmonst.pw = youmonst.pwmax;
+            }
+
+            if (!hpfull && *hp == *hpmax)
+                hprestored = TRUE;
+            if (!pwfull && youmonst.pw == youmonst.pwmax)
+                pwrestored = TRUE;
+            if ((hprestored || pwrestored) &&
+                flags.incomplete && !flags.interrupted &&
+                ((1 << flags.occupation) & ocm_rest)) {
+                if (hprestored)
+                    pline(msgc_statusgood, "Health%s restored.",
+                          pwrestored ? " and energy" : "");
+                else
+                    pline(msgc_statusgood, "Energy restored.");
+                interrupt_occupation(ocm_rest);
             }
 
             if (!u.uinvulnerable) {

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-09-26 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -242,7 +242,7 @@ mon_choose_recharge(struct monst *mon, int bcsign)
     int score_best = -1;
     int otyp;
     /* count object amount */
-    for (obj = m_minvent(mon); obj; obj = obj->nobj) {
+    for (obj = mon->minvent; obj; obj = obj->nobj) {
         score = -1;
         otyp = obj->otyp;
         /* check for a valid object -- we can't use
@@ -790,46 +790,59 @@ maybe_tame(struct monst *mon, struct monst *mtmp, struct obj *sobj)
 {
     boolean you = (mon == &youmonst);
     /* cursed objects has no effect for peacefuls */
-    if (sobj->cursed && !mon->mtame && mon->mpeaceful)
+    if (sobj->cursed && !you && !mon->mtame && mon->mpeaceful)
         return;
+
     /* no effect on self */
     if (mon == mtmp)
         return;
+
+    /* if resisted, do nothing */
     if (!mx_eshk(mtmp) && resist(mon, mtmp, sobj->oclass, NOTELL, bcsign(sobj)))
         return;
 
-    boolean set_align = 1;
-    if (sobj->cursed)
-        set_align = -1;
-    if (mon != &youmonst && !mon->mtame)
-        set_align = -set_align;
-    if (mon->mpeaceful && !mon->mtame)
-        set_align = 0;
+    /* -1: hostile, 0: peaceful, 1: tame */
+    int tame_result = -1;
+    if (mon->mpeaceful && !you && !mon->mtame)
+        tame_result = 0;
+    else if (sobj->cursed ?
+             (!you && !mon->mtame) :
+             (you || mon->mtame))
+        tame_result = 1;
 
     if (mtmp == &youmonst) {
         /* taming on player increases or decreases the alignment record */
-        adjalign(set_align * 5);
-        if (set_align != 0)
-            pline(set_align > 0 ? msgc_intrgain : msgc_intrloss,
+        adjalign(tame_result * 5);
+        if (tame_result != 0)
+            pline(tame_result > 0 ? msgc_intrgain : msgc_intrloss,
                   "You feel %s %s.",
-                  set_align > 0 ? "appropriately" : "insufficiently",
+                  tame_result > 0 ? "appropriately" : "insufficiently",
                   align_str(u.ualign.type));
         return;
     }
 
-    set_align++;
-    switch (set_align) {
+    tame_result++;
+    switch (tame_result) {
     case 0:
+        if (!mtmp->mpeaceful && !mtmp->mtame)
+            break;
+
         if (!you) /* setmangry screws with your alignment */
             msethostility(mtmp, TRUE, FALSE);
         else
             setmangry(mtmp);
         break;
     case 1:
+        if (mtmp->mpeaceful && !mtmp->mtame)
+            break;
+
         if (!mx_eshk(mtmp)) /* peaceful taming keeps hostile shk */
             msethostility(mtmp, FALSE, FALSE);
         break;
     case 2:
+        if (mtmp->mtame)
+            break;
+
         if (mx_eshk(mtmp))
             make_happy_shk(mtmp, FALSE);
         else
@@ -1292,7 +1305,7 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
                - Monster is wielding a sling: uncurse 1st found stackable gems
                - Otherwise: uncurse 1st found stackable weapon that isn't already wielded */
             struct obj *mquiver = NULL;
-            for (obj = m_minvent(mon); obj; obj = obj->nobj) {
+            for (obj = mon->minvent; obj; obj = obj->nobj) {
                 long wornmask;
                 
                 /* gold isn't subject to cursing and blessing */
@@ -1358,6 +1371,8 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
             unpunish();
         if (you)
             update_inventory();
+        if (you || vis)
+            *known = TRUE;
         break;
     case SCR_CREATE_MONSTER:
     case SPE_CREATE_MONSTER:
@@ -1450,17 +1465,13 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
             /* In case we land on the same position, don't reveal the scroll's ID */
             int sx = m_mx(mon);
             int sy = m_my(mon);
-            if (sobj->blessed && !teleport_control(mon)) {
-                if (you) {
-                    *known = TRUE;
-                    if (yn("Do you wish to teleport?") == 'n')
-                    break;
-                }
-            }
-            if (!mon_tele(mon, !!teleport_control(mon)) || /* "A mysterious force ..." */
+            if (!mon_tele(mon, !!teleport_control(mon) ||
+                          sobj->blessed) || /* "A mysterious force ..." */
                 sx != m_mx(mon) || sy != m_my(mon))
                 *known = TRUE;
         }
+        if (sobj->blessed)
+            *known = TRUE; /* since it's controlled */
         break;
     case SCR_GOLD_DETECTION:
         if (confused || sobj->cursed)
@@ -1520,7 +1531,7 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
                 makeknown(SCR_IDENTIFY);
         }
 
-        if (m_minvent(mon) && !confused) {
+        if (mon->minvent && !confused) {
             identify_pack(mon, cval, idpower);
         }
         return 1;
@@ -1623,7 +1634,7 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
     case SCR_AMNESIA:
         if (!you) {
             /* forget items */
-            for (otmp = m_minvent(mon); otmp; otmp = otmp->nobj) {
+            for (otmp = mon->minvent; otmp; otmp = otmp->nobj) {
                 otmp->mknown = 0;
                 otmp->mbknown = 0;
             }
@@ -1857,7 +1868,7 @@ set_lit(int x, int y, void *val)
         if (!mtmp && x == u.ux && y == u.uy)
             mtmp = &youmonst;
         if (mtmp)
-            for (otmp = m_minvent(mtmp); otmp; otmp = otmp->nobj)
+            for (otmp = mtmp->minvent; otmp; otmp = otmp->nobj)
                 snuff_lit(otmp);
     }
 }
@@ -1890,7 +1901,7 @@ litroom(struct monst *mon, boolean on, struct obj *obj, boolean tell)
 
         if (you && Engulfed) {
             /* Since engulfing will prevent set_lit(), douse lamps/etc here as well */
-            for (otmp = invent; otmp; otmp = otmp->nobj)
+            for (otmp = youmonst.minvent; otmp; otmp = otmp->nobj)
                 snuff_lit(otmp);
             if (tell)
                 pline(msgc_yafm, "It seems even darker in here than before.");

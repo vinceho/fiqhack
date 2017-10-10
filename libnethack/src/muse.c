@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2016-02-17 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-10 */
 /* Copyright (C) 1990 by Ken Arromdee                              */
 /* NetHack may be freely redistributed.  See license for details.  */
 
@@ -85,7 +85,7 @@ arg_to_musable(const struct nh_cmd_arg *arg)
         if (arg->invlet == '-' || arg->invlet == ',')
             m.obj = &zeroobj;
         else
-            for (m.obj = invent; m.obj; m.obj = m.obj->nobj)
+            for (m.obj = youmonst.minvent; m.obj; m.obj = m.obj->nobj)
                 if (m.obj->invlet == arg->invlet)
                     break;
     }
@@ -273,8 +273,7 @@ mzapmsg(struct monst *mtmp, struct obj *otmp, boolean self)
 {
     if (!mon_visible(mtmp))
         You_hear(msgc_levelsound, "a %s zap.",
-                 (distu(mtmp->mx, mtmp->my) <=
-                  (BOLT_LIM + 1) * (BOLT_LIM + 1)) ? "nearby" : "distant");
+                 distant(mtmp) ? "distant" : "nearby");
     else if (self)
         pline(combat_msgc(mtmp, NULL, cr_hit), "%s zaps %sself with %s!",
               Monnam(mtmp), mhim(mtmp), doname(otmp));
@@ -1357,7 +1356,7 @@ find_item(struct monst *mon, struct musable *m)
         }
     }
 
-    if (fraction < 35) {
+    if (fraction < 35 && mon != u.usteed) {
         if (lev->locations[x][y].typ == STAIRS && !stuck && !immobile) {
             if (x == lev->dnstair.sx && y == lev->dnstair.sy &&
                 !levitates(mon))
@@ -1379,7 +1378,7 @@ find_item(struct monst *mon, struct musable *m)
                 m->use = MUSE_DN_LADDER;
         }
     }
-    if (!stuck && !immobile && !m->use) { /* FIXME: cleanup */
+    if (!stuck && !immobile && !m->use && mon != u.usteed) { /* FIXME: cleanup */
         /* Note: trap doors take precedence over teleport traps. */
         int xx, yy;
 
@@ -1697,6 +1696,7 @@ find_item_obj(struct obj *chain, struct musable *m,
                               obj->oclass == SCROLL_CLASS ? MUSE_SCR  :
                               obj->oclass == POTION_CLASS ? MUSE_POT  :
                               obj->oclass == SPBOOK_CLASS ? MUSE_BOOK :
+                              obj->oclass == FOOD_CLASS   ? MUSE_EAT  :
                               obj->otyp == SKELETON_KEY   ? MUSE_KEY  :
                               obj->otyp == CREDIT_CARD    ? MUSE_KEY  :
                               obj->otyp == LOCK_PICK      ? MUSE_KEY  :
@@ -2156,7 +2156,8 @@ use_item(struct musable *m)
                   "%s hurls %s!", Monnam(mon), singular(obj, doname));
         }
         m_throw(mon, mon->mx, mon->my, m->x, m->y,
-                distmin(mon->mx, mon->my, m->x, m->y), obj, TRUE);
+                distmin(mon->mx, mon->my, m->x, m->y), obj,
+                !distant(mon));
         return 2;
     case MUSE_EAT:
         dog_eat(mon, obj, mon->mx, mon->my, FALSE);
@@ -2501,11 +2502,7 @@ use_item(struct musable *m)
             }
         }
 
-        mtmp = m_at(mon->dlevel, m->x, m->y);
-        if (!mtmp) {
-            if (m->x == u.ux && m->y == u.uy)
-                mtmp = &youmonst;
-        }
+        mtmp = um_at(mon->dlevel, m->x, m->y);
         if (!mtmp) {
             /* can happen if a monster is confused or is trying to hit
                something invisible/displaced */

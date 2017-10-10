@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2015-11-17 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-10 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -52,7 +52,7 @@ mon_bon(struct monst *mon, int otyp, int extra)
 {
     int ret = 0;
     struct obj *obj;
-    for (obj = m_minvent(mon); obj; obj = obj->nobj)
+    for (obj = mon->minvent; obj; obj = obj->nobj)
         if (obj->otyp == otyp &&
             ((obj->oclass == RING_CLASS &&
               (obj->owornmask & W_RING)) ||
@@ -61,6 +61,13 @@ mon_bon(struct monst *mon, int otyp, int extra)
 
     ret += extra;
     return ret;
+}
+
+/* Returns true if the monster is far away from hero */
+boolean
+distant(const struct monst *mon)
+{
+    return (distu(mon->mx, mon->my) <= (BOLT_LIM * BOLT_LIM));
 }
 
 int
@@ -90,7 +97,7 @@ resists_blnd(const struct monst * mon)
     o = is_you ? uwep : MON_WEP(mon);
     if (o && o->oartifact && defends(AD_BLND, o))
         return TRUE;
-    o = is_you ? invent : mon->minvent;
+    o = mon->minvent;
     for (; o; o = o->nobj)
         if (o->oartifact && protects(AD_BLND, o))
             return TRUE;
@@ -172,7 +179,7 @@ can_blnd(struct monst * magr,   /* NULL == no specific aggressor */
 
     /* check if wearing a visor (only checked if visor might help) */
     if (check_visor) {
-        o = (mdef == &youmonst) ? invent : mdef->minvent;
+        o = mdef->minvent;
         for (; o; o = o->nobj)
             if ((o->owornmask & W_MASK(os_armh)) &&
                 (s = OBJ_DESCR(objects[o->otyp])) != NULL &&

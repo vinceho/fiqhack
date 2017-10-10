@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Alex Smith, 2017-06-29 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -78,10 +78,12 @@ resolve_uim(enum u_interaction_mode uim, boolean weird_attack, xchar x, xchar y)
         int peaceful = 0; /* how peaceful is the monster? */
 
         if (mtmp && !Hallucination && canclassifymon(mtmp)) {
-            if (mtmp->mtame)
-                peaceful = 3; /* tame */
-            else if (mtmp->mpeaceful)
-                peaceful = 1; /* 1=don't interact, 2=chat */
+            if (mtmp->mtame || mtmp->mpeaceful) {
+                peaceful = 3; /* allow displacing peacefuls */
+                /* Don't allow displacing priests/shopkeepers */
+                if (mx_eshk(mtmp) || mx_epri(mtmp))
+                    peaceful = 1;
+            }
         } /* otherwise treat the monster as hostile */
 
         switch (uim) {
@@ -693,7 +695,7 @@ dosinkfall(void)
         setequip(os_ringr, NULL, em_magicheal);
     if (uarmf && uarmf->otyp == LEVITATION_BOOTS)
         setequip(os_armf, NULL, em_magicheal);
-    for (obj = invent; obj; obj = obj->nobj) {
+    for (obj = youmonst.minvent; obj; obj = obj->nobj) {
         if (obj->oartifact && artifact_has_invprop(obj, LEVITATION))
             uninvoke_artifact(obj);
     }
@@ -898,7 +900,7 @@ test_move(int ux, int uy, int dx, int dy, int dz, int mode,
                 pline(msgc_cancelled, "Your body is too large to fit through.");
             return FALSE;
         }
-        if (invent && (inv_weight_total() > 600)) {
+        if (youmonst.minvent && (inv_weight_total() > 600)) {
             if (mode == DO_MOVE)
                 pline(msgc_cancelled,
                       "You are carrying too much to get through.");
@@ -945,7 +947,7 @@ test_move(int ux, int uy, int dx, int dy, int dz, int mode,
     /* Can we be blocked by a boulder? */
     if (!throws_rocks(youmonst.data) &&
         !(verysmall(youmonst.data) && !u.usteed) &&
-        !((!invent || inv_weight_over_cap() <= -850) && !u.usteed)) {
+        !((!youmonst.minvent || inv_weight_over_cap() <= -850) && !u.usteed)) {
         /* We assume we can move boulders when we're at a distance from them.
            When it comes to actually do the move, resolve_uim() may replace the
            move with a #pushboulder command. If it doesn't, the move fails
@@ -1859,11 +1861,13 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
                       Monnam(mtmp));
                 action_completed();
                 return 1;
-            } else if (!mtmp->mtame) {
+            } else if ((!mtmp->mtame && !mtmp->mpeaceful) ||
+                       mx_eshk(mtmp) || mx_epri(mtmp)) {
                 /* can happen through stun/confusion */
                 pline(msgc_failrandom, "You bump into %s.  "
                       "%s's apparently unwilling to swap places.",
                       mon_nam(mtmp), msgupcasefirst(mhe(mtmp)));
+                return 1;
             }
         } else {
             /* Possibly unwield launcher for ammo unless we're using forcefight. */
@@ -2197,7 +2201,9 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
             remove_monster(level, x, y);
             place_monster(mtmp, u.ux0, u.uy0, TRUE);
             pline_once(mtmp->mtame ? msgc_petneutral : msgc_petfatal,
-                       "You %s %s.", mtmp->mtame ? "displace" : "frighten", pnambuf);
+                       "You %s %s.",
+                       mtmp->mtame || mtmp->mpeaceful ?
+                       "displace" : "frighten", pnambuf);
 
             /* check for displacing it into pools and traps */
             switch (minliquid(mtmp) ? 2 : mintrap(mtmp)) {
@@ -3189,7 +3195,7 @@ weight_cap(void)
     }
 
     struct obj *obj;
-    for (obj = invent; obj; obj = obj->nobj)
+    for (obj = youmonst.minvent; obj; obj = obj->nobj)
         if ((obj->owornmask & W_ARMOR) && (obj_properties(obj) & opm_carrying))
             carrcap = (carrcap * 11) / 10;
 
@@ -3199,7 +3205,7 @@ weight_cap(void)
 int
 inv_weight_total(void)
 {
-    struct obj *otmp = invent;
+    struct obj *otmp = youmonst.minvent;
     int wt = 0;
 
     while (otmp) {
@@ -3271,7 +3277,7 @@ check_capacity(const char *str)
 int
 inv_cnt(boolean letter_only)
 {
-    struct obj *otmp = invent;
+    struct obj *otmp = youmonst.minvent;
     int ct = 0;
 
     while (otmp) {

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Alex Smith, 2016-06-14 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -551,7 +551,7 @@ dochug(struct monst *mtmp)
     /* Now the actual movement phase */
 
     if (mdat->mlet == S_LEPRECHAUN) {
-        ygold = findgold(invent);
+        ygold = findgold(youmonst.minvent);
         lepgold = findgold(mtmp->minvent);
     }
 
@@ -766,6 +766,12 @@ m_move(struct monst *mtmp, int after)
        first turn out, but we now ensure that muxy always has a sensible value,
        so nothing breaks. */
 
+    /* If the monster is a steed and no longer tame, force a dismount */
+    if (mtmp == u.usteed && !mtmp->mtame) {
+        dismount_steed(DISMOUNT_THROWN);
+        return 3;
+    }
+
     if (!Is_rogue_level(&u.uz))
         can_tunnel = tunnels(ptr);
     can_open = !(nohands(ptr) || verysmall(ptr));
@@ -775,6 +781,7 @@ m_move(struct monst *mtmp, int after)
     doorbuster = is_giant(ptr);
     if (mtmp->wormno)
         goto not_special;
+
     /* my dog gets special treatment */
     if (mtmp->mtame) {
         mmoved = dog_move(mtmp, after);
@@ -916,6 +923,7 @@ not_special:
         flag |= (ALLOW_SANCT | ALLOW_SSM);
     else
         flag |= ALLOW_MUXY;
+    flag |= ALLOW_PEACEFUL;
     if (pm_isminion(ptr) || is_rider(ptr) || is_mplayer(ptr))
         flag |= ALLOW_SANCT;
     /* unicorn may not be able to avoid hero on a noteleport level */
@@ -981,6 +989,8 @@ not_special:
         chi = -1;
         if (flag & OPENDOOR)
             ds.mmflags |= MM_IGNOREDOORS;
+        if (flag & ALLOW_PEACEFUL)
+            ds.mmflags |= MM_IGNOREPEACE;
         nidist = distmap(&ds, omx, omy);
 
         /* Check if we can actually force lineup */
@@ -1193,8 +1203,22 @@ not_special:
             }
             /* doorbusters are taken care of in postmov */
         }
-        remove_monster(level, omx, omy);
-        place_monster(mtmp, nix, niy, TRUE);
+
+        struct monst *dmon = m_at(level, nix, niy);
+        if ((info[chi] & ALLOW_PEACEFUL) && dmon) {
+            if (cansee(mtmp->mx, mtmp->my) ||
+                cansee(dmon->mx, dmon->my))
+                pline_once(msgc_monneutral, "%s %s.",
+                           M_verbs(mtmp, "displace"),
+                           mon_nam(dmon));
+            remove_monster(level, omx, omy);
+            remove_monster(level, nix, niy);
+            place_monster(mtmp, nix, niy, TRUE);
+            place_monster(dmon, omx, omy, TRUE);
+        } else {
+            remove_monster(level, omx, omy);
+            place_monster(mtmp, nix, niy, TRUE);
+        }
 
         /* Place a segment at the old position. */
         if (mtmp->wormno)
@@ -1540,7 +1564,7 @@ can_ooze(struct monst *mtmp)
     if (!amorphous(mtmp->data))
         return FALSE;
 
-    chain = m_minvent(mtmp);
+    chain = mtmp->minvent;
 
     for (obj = chain; obj; obj = obj->nobj) {
         int typ = obj->otyp;

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-09-25 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -434,7 +434,7 @@ mattackm(struct monst *magr, struct monst *mdef)
                     magr->mhp -= rnd(6);
                     if (magr->mhp <= 0) {
                         mondied(magr);
-                        return 1;
+                        return MM_AGR_DIED;
                     }
                 }
 
@@ -1007,7 +1007,7 @@ damage(struct monst *magr, struct monst *mdef, const struct attack *mattk)
     if (touch_petrifies(pd) && !resists_ston(magr)) {
         int protector = attk_protection((int)mattk->aatyp);
         int wornitems = 0;
-        for (obj = m_minvent(magr); obj; obj = obj->nobj)
+        for (obj = magr->minvent; obj; obj = obj->nobj)
             wornitems |= obj->owornmask;
 
         /* wielded weapon gives same protection as gloves here */
@@ -2230,8 +2230,7 @@ do_at_area(struct level *lev)
             continue;
         if ((areaatk[i] = attacktype_fordmg(magr->data, AT_AREA, AD_ANY))) {
             areamons[i] = magr;
-            area[COLNO][0] = 0;
-            area[COLNO][0] |= ((uint64_t)1 << i);
+            area[COLNO][0] = ((uint64_t)1 << i);
             do_clear_area(m_mx(magr), m_my(magr), areaatk[i]->damn,
                           set_at_area, &area);
             i++;
@@ -2315,8 +2314,8 @@ maurahitpile(struct monst *mon, int x, int y, const struct attack *mattk)
                 else
                     omon->mtame = 0; /* no longer tame */
             }
-            if (mon->mpeaceful != omon->mpeaceful)
-                omon->mpeaceful = mon->mpeaceful;
+            if (!mon->mtame)
+                msethostility(omon, !mon->mpeaceful, TRUE);
             /* turn into a zombie if applicable */
             int mndx = NON_PM;
             if (is_human(omon->data))
@@ -2348,7 +2347,8 @@ maurahitpile(struct monst *mon, int x, int y, const struct attack *mattk)
                 pline(msgc_monneutral, "%s from the dead%s!",
                       M_verbs(omon, "raise"),
                       nonliving(omon->data) ? "" :
-                      msgcat_many(" under ", mon_nam(mon), " power", NULL));
+                      msgcat_many(" under ", s_suffix(mon_nam(mon)),
+                                  " power", NULL));
             if (!nonliving(omon->data) && !izombie(omon))
                 set_property(omon, ZOMBIE, 0, TRUE);
         }

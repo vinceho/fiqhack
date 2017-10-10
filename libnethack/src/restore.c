@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-09-26 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -91,13 +91,24 @@ find_lev_obj(struct level *lev)
     }
 }
 
+static void
+setup_invent_olev(struct obj *chain)
+{
+    struct obj *obj;
+    for (obj = chain; obj; obj = obj->nobj) {
+        obj->olev = level;
+        if (Has_contents(obj))
+            setup_invent_olev(obj->cobj);
+    }
+}
+
 /* Validate in_use -- it should never be set in neutral turnstate */
 void
 inven_inuse(boolean quietly)
 {
     struct obj *otmp, *otmp2;
 
-    for (otmp = invent; otmp; otmp = otmp2) {
+    for (otmp = youmonst.minvent; otmp; otmp = otmp2) {
         otmp2 = otmp->nobj;
         if (otmp->in_use) {
             if (!quietly)
@@ -479,7 +490,8 @@ restgamestate(struct memfile *mf)
     /* this stuff comes after potential aborted restore attempts */
     restore_timers(mf, lev, RANGE_GLOBAL, FALSE, 0L);
     restore_light_sources(mf, lev);
-    restobjchn(mf, lev, FALSE, FALSE, &invent, NULL);
+    if (flags.save_revision < 7)
+        restobjchn(mf, lev, FALSE, FALSE, &youmonst.minvent, NULL);
     migrating_mons = restmonchn(mf, NULL, FALSE);
     restore_mvitals(mf);
 
@@ -914,6 +926,9 @@ dorecover(struct memfile *mf)
     pantheon_init(FALSE);
 
     mtmp = restore_mon(mf, NULL, NULL);
+    if (mtmp->minvent)
+        restobjchn(mf, NULL, FALSE, FALSE,
+                   &(mtmp->minvent), NULL);
     youmonst = *mtmp;
     dealloc_monst(mtmp);
     set_uasmon();       /* fix up youmonst.data */
@@ -942,6 +957,9 @@ dorecover(struct memfile *mf)
 
     /* all data has been read, prepare for player */
     level = levels[ledger_no(&u.uz)];
+
+    /* set up olev on hero inventory */
+    setup_invent_olev(youmonst.minvent);
 
     max_rank_sz();      /* to recompute mrank_sz (botl.c) */
     /* take care of iron ball & chain */

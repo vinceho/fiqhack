@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2016-02-19 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -505,7 +505,7 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
             struct obj *otemp;
             struct obj *onext;
             boolean didmerge;
-            for (otemp = m_minvent(mdef); otemp; otemp = onext) {
+            for (otemp = mdef->minvent; otemp; otemp = onext) {
                 onext = otemp->nobj;
                 bhito(otemp, otmp);
             }
@@ -514,7 +514,8 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                until no merges. */
             do {
                 didmerge = FALSE;
-                for (otemp = invent; !didmerge && otemp; otemp = otemp->nobj)
+                for (otemp = youmonst.minvent; !didmerge && otemp;
+                     otemp = otemp->nobj)
                     for (onext = otemp->nobj; onext; onext = onext->nobj)
                         if (merged(&otemp, &onext)) {
                             didmerge = TRUE;
@@ -583,8 +584,8 @@ probe_monster(struct monst *mon)
     if (!you && notonhead)
         return; /* don't show minvent for long worm tail */
 
-    if (m_minvent(mon)) {
-        for (otmp = m_minvent(mon); otmp; otmp = otmp->nobj)
+    if (mon->minvent) {
+        for (otmp = mon->minvent; otmp; otmp = otmp->nobj)
             otmp->dknown = 1;   /* treat as "seen" */
         if (you)
             display_inventory(NULL, FALSE);
@@ -973,7 +974,7 @@ unturn_dead(struct monst *mon)
     const char *owner, *corpse = NULL;
 
     youseeit = (mon == &youmonst) ? TRUE : canseemon(mon);
-    otmp2 = (mon == &youmonst) ? invent : mon->minvent;
+    otmp2 = mon->minvent;
 
     while ((otmp = otmp2) != 0) {
         otmp2 = otmp->nobj;
@@ -1967,11 +1968,14 @@ zappable(struct monst *mon, struct obj *wand)
     boolean you = (mon == &youmonst);
     boolean vis = canseemon(mon);
     if (wand->spe < 0 || (wand->spe == 0 && rn2(121))) {
-        if (you || vis) {
-            pline(you ? msgc_failrandom : msgc_monneutral,
+        if (you)
+            pline(msgc_failrandom,
                   "You feel an absence of magical power.");
+        else
+            pline(msgc_monneutral, "Nothing happens.");
+        if (you || vis)
             wand->known = 1; /* we know the :0 */
-        }
+
         if (!you)
             wand->mknown = 1; /* monster learns charge count */
         return 0;
@@ -2245,8 +2249,7 @@ cancel_monst(struct monst *mdef, struct obj *obj, struct monst *magr,
     if (self_cancel) {  /* 1st cancel inventory */
         struct obj *otmp;
 
-        for (otmp = (youdefend ? invent : mdef->minvent); otmp;
-             otmp = otmp->nobj)
+        for (otmp = mdef->minvent; otmp; otmp = otmp->nobj)
             cancel_item(otmp);
     }
 
@@ -3320,6 +3323,9 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
             hpmax = u.mhmax;
         tmp = min((40 * hpmax + 1) / 100, tmp);
     }
+    if (!tmp)
+        return;
+
     if (you)
         losehp(tmp, killer_msg(DIED, an(fltxt)));
     else {
@@ -3699,7 +3705,7 @@ destroy_item(int osym, int dmgtyp)
     enum destroy_msg_type dindx;
     const char *mult;
 
-    for (obj = invent; obj; obj = obj2) {
+    for (obj = youmonst.minvent; obj; obj = obj2) {
         obj2 = obj->nobj;
         if (obj->oclass != osym)
             continue;   /* test only objs of type osym */
