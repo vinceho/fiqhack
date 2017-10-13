@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-11 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -12,6 +12,8 @@ static void restore_autopickup_rules(struct memfile *mf,
                                      struct nh_autopickup_rules *r);
 static void restore_utracked(struct memfile *mf, struct you *you);
 static void find_lev_obj(struct level *lev);
+static void find_lev_memobj(struct level *lev);
+static void restore_memobj(struct memfile *mf);
 static void restlevchn(struct memfile *mf);
 static void restdamage(struct memfile *mf, struct level *lev, boolean ghostly);
 static void restobjchn(struct memfile *mf, struct level *lev,
@@ -89,6 +91,43 @@ find_lev_obj(struct level *lev)
         fobjtmp = otmp->nexthere;
         place_object(otmp, lev, otmp->ox, otmp->oy);
     }
+}
+
+/* Sets up lev->memobjects[x][y] */
+static void
+find_lev_memobj(struct level *lev)
+{
+    /* Reset current lists */
+    int x, y;
+    for (x = 0; x < COLNO; x++)
+        for (y = 0; y < ROWNO; y++)
+            lev->memobjects[x][y] = NULL;
+
+    /* Recreate the list */
+    struct obj *memobj;
+    for (memobj = lev->memobjlist; memobj; memobj = memobj->nobj) {
+        x = memobj->ox;
+        y = memobj->oy;
+        memobj->nexthere = lev->memobjects[x][y];
+        lev->memobjects[x][y] = memobj;
+    }
+}
+
+/* Restores object memories */
+static void
+restore_memobj(struct memfile *mf)
+{
+    int i;
+    for (i = 0; i <= maxledgerno(); i++) {
+        if (levels[i]) {
+            restobjchn(mf, levels[i], FALSE, FALSE, &(levels[i]->memobjlist),
+                       NULL);
+
+            find_lev_memobj(levels[i]);
+        }
+    }
+
+    restobjchn(mf, level, FALSE, FALSE, &(youmonst.meminvent), NULL);
 }
 
 static void
@@ -240,6 +279,20 @@ restobjchn(struct memfile *mf, struct level *lev, boolean ghostly,
         /* we might need to produce an index, for speed in relinking IDs */
         if (table)
             trietable_add(table, otmp->o_id, otmp);
+
+        /* If this is an object memory, relink it. */
+        if (otmp->mem_o_id && otmp->memory != OM_NO_MEMORY) {
+            /* try object's level first */
+            if (otmp->olev)
+                otmp->mem_obj = find_oid_lev(otmp->olev, otmp->mem_o_id);
+            /* try regular find_oid */
+            if (!otmp->mem_obj)
+                otmp->mem_obj = find_oid(otmp->mem_o_id);
+            if (!otmp->mem_obj)
+                impossible("Object memory link failed.");
+            else
+                otmp->mem_obj->mem_obj = otmp;
+        }
 
         /* get contents of a container or statue */
         if (Has_contents(otmp)) {
@@ -516,6 +569,10 @@ restgamestate(struct memfile *mf)
     restore_track(mf);
     restore_rndmonst_state(mf);
     restore_history(mf);
+
+    /* must come after all objs are restored */
+    if (flags.save_revision >= 8)
+        restore_memobj(mf);
 
     /* must come after all mons & objs are restored */
     relink_timers(FALSE, lev, NULL);

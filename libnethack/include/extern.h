@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-10 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-12 */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -471,6 +471,7 @@ extern void free_dungeon(void);
 extern void save_d_flags(struct memfile *mf, d_flags f);
 extern void save_dlevel(struct memfile *mf, d_level d);
 extern void save_dungeon(struct memfile *mf);
+extern const char *describe_dungeon_level(const struct level *);
 extern d_flags restore_d_flags(struct memfile *mf);
 extern void restore_dlevel(struct memfile *mf, d_level *d);
 extern void restore_dungeon(struct memfile *mf);
@@ -912,6 +913,18 @@ extern void mfmagic_set(struct memfile *mf, int32_t magic);
 extern boolean mequal(struct memfile *mf1, struct memfile *mf2,
                       const char **difference_reason);
 
+/* ### memobj.c ### */
+
+extern int dofindobj(const struct nh_cmd_arg *);
+extern void update_obj_memories(struct level *);
+extern void update_obj_memories_at(struct level *, int, int);
+extern void update_container_memory(struct obj *);
+extern void update_obj_memory(struct obj *);
+extern void free_obj_memory(struct obj *);
+extern void free_memobj_chain(struct obj *);
+extern void free_memobj(void);
+extern void extract_obj_memory(struct obj *);
+
 /* ### mextra.c ### */
 
 # define GEN_EXBASE_PROT(entity, emo)                                   \
@@ -1096,6 +1109,7 @@ extern void discard_minvent(struct monst *);
 extern void obj_extract_self(struct obj *);
 extern void extract_nobj(struct obj *, struct obj **,
                          struct obj **, enum obj_where);
+extern void extract_nexthere(struct obj *, struct obj **);
 extern int add_to_minv(struct monst *, struct obj *, struct obj **);
 extern struct obj *add_to_container(struct obj *, struct obj *);
 extern void add_to_buried(struct obj *obj);
@@ -1662,6 +1676,7 @@ extern int dopay(const struct nh_cmd_arg *);
 extern boolean paybill(int);
 extern void finish_paybill(void);
 extern struct obj *find_oid(unsigned id);
+extern struct obj *find_oid_lev(struct level *lev, unsigned id);
 extern int shop_item_cost(const struct obj *obj);
 extern long contained_cost(const struct obj *, struct monst *, long, boolean,
                            boolean);
