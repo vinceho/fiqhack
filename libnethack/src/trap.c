@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -353,7 +353,7 @@ maketrap(struct level *lev, int x, int y, int typ, enum rng rng)
             add_damage(x, y,    /* schedule repair */
                        ((IS_DOOR(loc->typ) || IS_WALL(loc->typ))
                         && !flags.mon_moving) ? 200L : 0L);
-        loc->doormask = 0;      /* subsumes altarmask, icedpool... */
+        loc->flags = 0;      /* subsumes altarmask, icedpool... */
         if (IS_ROOM(loc->typ))  /* && !IS_AIR(loc->typ) */
             loc->typ = ROOM;
 
@@ -1386,7 +1386,7 @@ blow_up_landmine(struct trap *trap)
     del_engr_at(level, trap->tx, trap->ty);
     wake_nearto(trap->tx, trap->ty, 400);
     if (IS_DOOR(level->locations[trap->tx][trap->ty].typ))
-        level->locations[trap->tx][trap->ty].doormask = D_BROKEN;
+        level->locations[trap->tx][trap->ty].flags = D_BROKEN;
     if (!IS_DRAWBRIDGE(level->locations[trap->tx][trap->ty].typ)) {
         trap->ttyp = PIT;       /* explosion creates a pit */
         trap->madeby_u = FALSE; /* resulting pit isn't yours */
@@ -1618,7 +1618,7 @@ launch_obj(short otyp, int x1, int y1, int x2, int y2, int style)
             if (cansee(bhitpos.x, bhitpos.y))
                 pline(msgc_consequence,
                       "The boulder crashes through a door.");
-            level->locations[bhitpos.x][bhitpos.y].doormask = D_BROKEN;
+            level->locations[bhitpos.x][bhitpos.y].flags = D_BROKEN;
             if (dist)
                 unblock_point(bhitpos.x, bhitpos.y);
         }
@@ -2765,9 +2765,15 @@ dofiretrap(struct monst *mon, struct obj *box)
     burn_away_slime(mon);
 
     if (burnarmor(mon) || rn2(3)) {
-        destroy_mitem(mon, SCROLL_CLASS, AD_FIRE);
-        destroy_mitem(mon, SPBOOK_CLASS, AD_FIRE);
-        destroy_mitem(mon, POTION_CLASS, AD_FIRE);
+        const char *killer;
+        num = destroy_mitem(mon, ALL_CLASSES, AD_FIRE, &killer);
+        if (you)
+            losehp(num, killer);
+        else {
+            mon->mhp -= num;
+            if (mon->mhp <= 0)
+                mondied(mon);
+        }
     }
     /* smell should be able to pass corners, but not walls,
        but that requires pathfinding... */
@@ -3107,8 +3113,8 @@ water_damage(struct obj * obj, const char *ostr, boolean force)
     } else if (obj->oclass == POTION_CLASS) {
         if (obj->otyp == POT_ACID) {
             if (vis)
-            pline(msgc_itemloss, "%s potion explodes!",
-                  you ? "Your" : "A");
+            pline(msgc_itemloss, "%s %s!",
+                  Shk_Your(obj), aobjnam(obj, "explode"));
             delobj(obj);
             if (carried) {
                 int dmg = rnd(10);
@@ -4001,7 +4007,7 @@ untrap(const struct nh_cmd_arg *arg, boolean force)
         return 0;
     }
 
-    switch (level->locations[x][y].doormask) {
+    switch (level->locations[x][y].flags) {
     case D_NODOOR:
         pline(msgc_cancelled, "You %s no door there.", Blind ? "feel" : "see");
         return 0;
@@ -4013,14 +4019,14 @@ untrap(const struct nh_cmd_arg *arg, boolean force)
         return 0;
     }
 
-    if ((level->locations[x][y].doormask & D_TRAPPED &&
+    if ((level->locations[x][y].flags & D_TRAPPED &&
          (force || (!confused && rn2(MAXULEV - u.ulevel + 11) < 10)))
         || (!force && confused && !rn2(3))) {
         pline(msgc_youdiscover, "You find a trap on the door!");
         exercise(A_WIS, TRUE);
         if (ynq("Disarm it?") != 'y')
             return 1;
-        if (level->locations[x][y].doormask & D_TRAPPED) {
+        if (level->locations[x][y].flags & D_TRAPPED) {
             ch = 15 + (Role_if(PM_ROGUE) ? u.ulevel * 3 : u.ulevel);
             exercise(A_DEX, TRUE);
             if (!force &&
@@ -4028,7 +4034,7 @@ untrap(const struct nh_cmd_arg *arg, boolean force)
                  rnd(75 + level_difficulty(&u.uz) / 2) > ch)) {
                 pline(msgc_substitute, "You set it off!");
                 b_trapped("door", FINGER);
-                level->locations[x][y].doormask = D_NODOOR;
+                level->locations[x][y].flags = D_NODOOR;
                 unblock_point(x, y);
                 newsym(x, y);
                 /* (probably ought to charge for this damage...) */
@@ -4036,7 +4042,7 @@ untrap(const struct nh_cmd_arg *arg, boolean force)
                     add_damage(x, y, 0L);
             } else {
                 pline(msgc_actionok, "You disarm it!");
-                level->locations[x][y].doormask &= ~D_TRAPPED;
+                level->locations[x][y].flags &= ~D_TRAPPED;
             }
         } else
             pline(msgc_notarget, "This door was not trapped.");
@@ -4105,8 +4111,8 @@ chest_trap(struct monst *mon, struct obj *obj, int bodypart, boolean disarm)
         }
         if (msg && (you || vis))
             pline(you ? msgc_nonmongood : msgc_monneutral,
-                  "But luckily%s%s the %s!",
-                  you ? "" : "for ", you ? "" : mon_nam(mon), msg);
+                  "But luckily%s the %s!", you ? "" :
+                  msgcat_many(" for ", mon_nam(mon), ",", NULL), msg);
     } else {
         int result;
         if (!rn2(20))
@@ -4243,7 +4249,7 @@ chest_trap(struct monst *mon, struct obj *obj, int bodypart, boolean disarm)
                               you ? "You" : Monnam(mon), you ? "are" : "is");
                     dmg = dice(4, 4);
                 }
-                destroy_mitem(mon, WAND_CLASS, AD_ELEC);
+                dmg += destroy_mitem(mon, ALL_CLASSES, AD_ELEC, NULL);
                 if (dmg) {
                     if (you)
                         losehp(dmg, killer_msg(DIED, "an electric shock"));
@@ -4458,7 +4464,8 @@ boolean
 lava_effects(void)
 {
     struct obj *obj, *obj2;
-    int dmg;
+    int dmg = 0;
+    const char *killer;
 
     burn_away_slime(&youmonst);
     if (likes_lava(youmonst.data))
@@ -4514,6 +4521,8 @@ lava_effects(void)
         u.uhp = -1;
         pline(msgc_fatal_predone, "You burn to a crisp...");
         done(BURNING, killer_msg(BURNING, lava_killer));
+        if (Wwalking)
+            return TRUE; /* don't immediately kill again if water walking */
         while (!safe_teleds(TRUE)) {
             pline(msgc_fatal_predone, "You're still burning.");
             done(BURNING, killer_msg(BURNING, lava_killer));
@@ -4531,9 +4540,8 @@ lava_effects(void)
     }
 
 burn_stuff:
-    destroy_mitem(&youmonst, SCROLL_CLASS, AD_FIRE);
-    destroy_mitem(&youmonst, SPBOOK_CLASS, AD_FIRE);
-    destroy_mitem(&youmonst, POTION_CLASS, AD_FIRE);
+    dmg = destroy_mitem(&youmonst, ALL_CLASSES, AD_FIRE, &killer);
+    losehp(dmg, killer);
     return FALSE;
 }
 

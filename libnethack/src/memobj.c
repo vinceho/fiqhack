@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-12 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
 /* Copyright (c) Fredrik Ljungdahl, 2017. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -7,7 +7,7 @@
 
 static struct obj *find_objects(struct level *, struct obj *, int *, boolean *,
                                 const char *, struct nh_menulist *, int);
-static struct obj *findobj_propmt(int, const char *);
+static struct obj *findobj_prompt(int, const char *);
 
 /* Handles object memories to allow players to search for objects they remember
    seeing. */
@@ -17,15 +17,21 @@ find_objects(struct level *lev, struct obj *chain, int *found,
              boolean *did_header, const char *str,
              struct nh_menulist *menu, int getobj)
 {
-    struct obj *obj;
-    struct obj *objfound;
+    struct obj *obj, *objfound, *upper;
     const char *dname;
     for (obj = chain; obj; obj = obj->nobj) {
         dname = distant_name(obj, doname);
         if (obj->where == OBJ_CONTAINED) {
-            struct obj *container = obj->ocontainer;
+            /* See if any upper container was lost. */
+            upper = obj;
+            while (upper->memory != OM_MEMORY_LOST &&
+                   upper->where == OBJ_CONTAINED)
+                upper = upper->ocontainer;
+            if (upper->memory == OM_MEMORY_LOST)
+                continue;
+
             dname = msgprintf("%s (inside %s)", dname,
-                              distant_name(container, doname));
+                              distant_name(upper, doname));
         }
 
         if (!strstri(dname, str) || obj->memory == OM_MEMORY_LOST) {
@@ -79,7 +85,7 @@ find_objects(struct level *lev, struct obj *chain, int *found,
     return NULL;
 }
 
-struct obj *
+static struct obj *
 findobj_prompt(int getobj, const char *str)
 {
     /* Find objects in levels */
@@ -173,7 +179,7 @@ dofindobj(const struct nh_cmd_arg *arg)
                   describe_dungeon_level(lev));
             notify_levelchange(&lev->z);
             flush_screen_nopos();
-            win_pause_output(P_MAP);
+            look_at_map(upper->ox, upper->oy);
         }
 
         /* Display object position */
@@ -185,11 +191,42 @@ dofindobj(const struct nh_cmd_arg *arg)
               vtense(dname, "are"), upper == obj ? "" :
               msgcat_many(", inside ", cdname, NULL));
         flush_screen_nopos();
-        win_pause_output(P_MAP);
+        look_at_map(upper->ox, upper->oy);
         notify_levelchange(NULL);
         doredraw();
     }
     return 0;
+}
+
+void
+show_obj_memories_at(struct level *lev, int x, int y)
+{
+    struct obj *memobj;
+    struct nh_objlist objlist;
+    const char *dfeature = NULL;
+    const char *fbuf;
+
+    if (!lev->memobjects[x][y])
+        return;
+
+    if (lev == level)
+        dfeature = dfeature_at(x, y);
+
+    if (dfeature && !strcmp(dfeature, "pool of water") && Underwater)
+        dfeature = NULL;
+
+    init_objmenulist(&objlist);
+
+    if (dfeature) {
+        fbuf = msgprintf("There is %s here.", an(dfeature));
+        add_objitem(&objlist, MI_TEXT, 0, fbuf, NULL, FALSE);
+        add_objitem(&objlist, MI_TEXT, 0, "", NULL, FALSE);
+    }
+
+    for (memobj = lev->memobjects[x][y]; memobj; memobj = memobj->nexthere)
+        add_objitem(&objlist, MI_NORMAL, 0, distant_name(memobj, doname), memobj, FALSE);
+
+    display_objects(&objlist, "Remembered objects", PICK_NONE, PLHINT_CONTAINER, NULL);
 }
 
 void

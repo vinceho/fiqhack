@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-13 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -152,19 +152,10 @@ describe_bg(int x, int y, int bg, char *buf)
     }
 
     switch (bg) {
-    case S_altar:
-        if (!In_endgame(&u.uz))
-            sprintf(buf, "%s altar",
-                    align_str(Amask2align
-                              (level->locations[x][y].altarmask & AM_MASK)));
-        else
-            sprintf(buf, "aligned altar");
-        break;
-
     case S_ndoor:
         if (is_drawbridge_wall(x, y) >= 0)
             strcpy(buf, "open drawbridge portcullis");
-        else if ((level->locations[x][y].doormask & ~D_TRAPPED) == D_BROKEN)
+        else if ((level->locations[x][y].flags & ~D_TRAPPED) == D_BROKEN)
             strcpy(buf, "broken door");
         else
             strcpy(buf, "doorway");
@@ -495,7 +486,6 @@ add_mon_info(struct nh_menulist *menu, const struct permonst *pm)
     mcon &= ~(MR_ACID | MR_STONE); /* these don't do anything */
     unsigned int mflag1 = pm->mflags1;
     unsigned int mflag2 = pm->mflags2;
-    unsigned int mflag3 = pm->mflags3;
 
     /* Misc */
     buf = msgprintf("Difficulty %d, %s, willpower %d.", diff,
@@ -651,13 +641,17 @@ add_mon_info(struct nh_menulist *menu, const struct permonst *pm)
         atkbuf = oneattack(&pm->mattk[i]);
         if (!atkbuf)
             break;
-        APPENDC(atkbuf, atkbuf);
+        if (!(i % 2)) {
+            if (buf) /* more attacks to follow */
+                add_menutext(menu, msgcat(buf, ","));
+            buf = msgprintf("%s%s", !i ?
+                            "Attacks: " :
+                            "         ", atkbuf);
+        } else
+            buf = msgprintf("%s, %s", buf, atkbuf);
     }
     if (buf)
-        buf = msgprintf("Attacks: %s.", buf);
-    else
-        buf = "Has no attacks.";
-    add_menutext(menu, buf);
+        add_menutext(menu, buf);
 }
 #undef APPENDC
 #undef ADDMR
@@ -789,7 +783,6 @@ checkfile(const char *inp, const struct permonst *pm,
     }
 
     if (found_in_file) {
-        struct nh_menulist menu;
         long entry_offset;
         int entry_count;
         int i;
@@ -940,9 +933,12 @@ do_look(boolean quick, const struct nh_cmd_arg *arg)
                 firstmatch = descbuf.mondesc;
         }
 
-        if (append_str(&out_str, descbuf.objdesc, objplur, 0))
+        if (append_str(&out_str, descbuf.objdesc, objplur, 0)) {
             if (!firstmatch)
                 firstmatch = descbuf.objdesc;
+            if (level->locations[cc.x][cc.y].pile)
+                show_obj_memories_at(level, cc.x, cc.y);
+        }
 
         if (append_str(&out_str, descbuf.trapdesc, 0, 0))
             if (!firstmatch)

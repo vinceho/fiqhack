@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-12 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -207,6 +207,7 @@ extern void arg_from_delta(schar dx, schar dy, schar dz,
                            struct nh_cmd_arg *arg);
 extern int getargdir(const struct nh_cmd_arg *arg, const char *query,
                      schar *dx, schar *dy, schar *dz);
+extern void look_at_map(int, int);
 extern int getargpos(const struct nh_cmd_arg *arg, coord *cc, boolean force,
                      const char *goal);
 extern struct obj *getargobj(const struct nh_cmd_arg *arg, const char *let,
@@ -337,8 +338,9 @@ extern void dropx(struct obj *);
 extern void dropy(struct obj *);
 extern void obj_no_longer_held(struct obj *);
 extern int doddrop(const struct nh_cmd_arg *);
-extern int dodown(boolean);
-extern int doup(void);
+extern int dotravel(const struct nh_cmd_arg *);
+extern int dodown(const struct nh_cmd_arg *, boolean);
+extern int doup(const struct nh_cmd_arg *);
 extern void notify_levelchange(const d_level *);
 extern void goto_level(d_level *, boolean, boolean, boolean);
 extern void schedule_goto(d_level *, boolean, boolean, int, const char *,
@@ -736,6 +738,7 @@ extern void update_inventory(void);
 extern int display_binventory(int, int, boolean);
 extern struct obj *display_cinventory(struct obj *);
 extern struct obj *display_minventory(struct monst *, int, const char *);
+extern const char *dfeature_at(int, int);
 extern int dotypeinv(const struct nh_cmd_arg *arg);
 extern void update_location(boolean all_objects);
 extern int look_here(int, boolean, boolean, boolean);
@@ -787,7 +790,7 @@ extern boolean obj_sheds_light(struct obj *);
 extern boolean obj_is_burning(struct obj *);
 extern void obj_split_light_source(struct obj *, struct obj *);
 extern void obj_merge_light_sources(struct obj *, struct obj *);
-extern int candle_light_range(struct obj *);
+extern int obj_light_range(struct obj *);
 extern int wiz_light_sources(const struct nh_cmd_arg *);
 
 /* ### localtime.c ### */
@@ -916,6 +919,7 @@ extern boolean mequal(struct memfile *mf1, struct memfile *mf2,
 /* ### memobj.c ### */
 
 extern int dofindobj(const struct nh_cmd_arg *);
+extern void show_obj_memories_at(struct level *, int, int);
 extern void update_obj_memories(struct level *);
 extern void update_obj_memories_at(struct level *, int, int);
 extern void update_container_memory(struct obj *);
@@ -2160,7 +2164,7 @@ extern void melt_ice(struct level *, xchar, xchar);
 extern int zap_over_floor(xchar, xchar, int, boolean *);
 extern void fracture_rock(struct obj *);
 extern boolean break_statue(struct obj *);
-extern int destroy_mitem(struct monst *, int, int);
+extern int destroy_mitem(struct monst *, int, int, const char **);
 extern int resist(const struct monst *, const struct monst *, char, int, int);
 extern void makewish(void);
 extern int getwandlevel(const struct monst *, struct obj *);

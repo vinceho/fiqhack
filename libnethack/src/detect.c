@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -80,8 +80,6 @@ find_obj_tile(int x, int y,
     int memobj;
     struct monst *mon;
     int res = 0;
-    int contained_res = 0;
-    boolean maybe_pile = FALSE;
 
     memobj = level->locations[x][y].mem_obj;
 
@@ -148,13 +146,8 @@ find_obj(struct obj *chain, int x, int y, int how, int *res,
                 *res = how;
                 map_object(obj, 1, TRUE);
                 unset_objpile(level, obj->ox, obj->oy);
-            } else {
+            } else
                 set_objpile(level, obj->ox, obj->oy);
-                if (!set_dknown)
-                    break;
-            }
-            if (!set_dknown)
-                continue;
         }
 
         /* Check if there's any object of the material/class contained recursively */
@@ -185,14 +178,10 @@ find_obj_content(struct obj *container, struct obj **contained,
         if (find_obj_match(obj, set_dknown, oclass, material)) {
             if (!(*contained)) {
                 *contained = obj;
-                if (!set_dknown)
-                    break;
             }
         }
 
         find_obj_content(obj, contained, set_dknown, oclass, material);
-        if (*contained && !set_dknown)
-            break;
     }
 
     if (*contained)
@@ -202,7 +191,7 @@ find_obj_content(struct obj *container, struct obj **contained,
 }
 
 /* Returns TRUE if the object matches our filters in oclass/material and
-   sets dknown if applicable */
+   sets dknown if applicable. Also updates object memory. */
 static boolean
 find_obj_match(struct obj *obj,
                boolean set_dknown, char oclass, unsigned material)
@@ -214,8 +203,12 @@ find_obj_match(struct obj *obj,
     ret = ((material && objects[obj->otyp].oc_material == material) ||
            (oclass && obj->oclass == oclass) ||
            (!oclass && !material));
-    if (ret && set_dknown)
-        obj->dknown = 1;
+    if (ret) {
+        if (set_dknown)
+            obj->dknown = TRUE;
+        if (obj->where == OBJ_FLOOR)
+            update_obj_memory(obj);
+    }
 
     return ret;
 }
@@ -301,7 +294,8 @@ gold_detect(struct monst *mon, struct obj *sobj, boolean *scr_known)
 
     pline(msgc_youdiscover, "You feel very greedy, and sense gold!");
     exercise(A_WIS, TRUE);
-    win_pause_output(P_MAP);
+    look_at_map(u.ux, u.uy);
+
     doredraw();
     u.uinwater = uw;
     if (Underwater)
@@ -316,7 +310,7 @@ gold_detect(struct monst *mon, struct obj *sobj, boolean *scr_known)
 int
 food_detect(struct obj *sobj, boolean *scr_known)
 {
-    boolean confused = (Confusion || (sobj && sobj->cursed)), stale;
+    boolean confused = (Confusion || (sobj && sobj->cursed));
     char oclass = confused ? POTION_CLASS : FOOD_CLASS;
     const char *what = confused ? "something" : "food";
     int uw = u.uinwater;
@@ -387,7 +381,7 @@ food_detect(struct obj *sobj, boolean *scr_known)
         pline(msgc_youdiscover, "Your %s tingles and you smell %s.",
               body_part(NOSE), what);
     exercise(A_WIS, TRUE);
-    win_pause_output(P_MAP);
+    look_at_map(u.ux, u.uy);
     doredraw();
     u.uinwater = uw;
     if (Underwater)
@@ -410,7 +404,6 @@ object_detect(struct obj *detector,     /* object doing the detecting */
     int uw = u.uinwater;
     const char *stuff;
     const char *buf;
-    int is_cursed = (detector && detector->cursed);
     int do_dknown = (detector &&
                      (detector->oclass == POTION_CLASS ||
                       detector->oclass == SPBOOK_CLASS) && detector->blessed);
@@ -460,7 +453,7 @@ object_detect(struct obj *detector,     /* object doing the detecting */
 
     pline(msgc_youdiscover, "%s", buf);
     exercise(A_WIS, TRUE);
-    win_pause_output(P_MAP);
+    look_at_map(u.ux, u.uy);
     doredraw();
     u.uinwater = uw;
     if (Underwater)
@@ -482,13 +475,6 @@ monster_detect(struct obj *otmp,        /* detecting object (if any) */
 {
     struct monst *mtmp;
     int mcnt = 0;
-
-    /* Change for NetHack 4.3-beta2: this gives a lingering effect for a couple
-       of turns after the detection. Mostly, this is so that ASCII players who
-       don't use the mouse can get an opportunity to farlook the monsters they
-       detected. */
-    if (property_timeout(&youmonst, DETECT_MONSTERS) < 300)
-        inc_timeout(&youmonst, DETECT_MONSTERS, 3, FALSE);
 
     /* Note: This used to just check level->monlist for a non-zero value but in
        versions since 3.3.0 level->monlist can test TRUE due to the presence of
@@ -537,7 +523,7 @@ monster_detect(struct obj *otmp,        /* detecting object (if any) */
         pline(msgc_youdiscover, "You sense the presence of monsters.");
         if (woken)
             pline(msgc_statusbad, "Monsters sense the presence of you.");
-        win_pause_output(P_MAP);
+        look_at_map(u.ux, u.uy);
         doredraw();
         if (Underwater)
             under_water(2);
@@ -616,7 +602,7 @@ trap_detect(struct monst *mon, struct obj *sobj)
     }
     for (door = 0; door < level->doorindex; door++) {
         cc = level->doors[door];
-        if (level->locations[cc.x][cc.y].doormask & D_TRAPPED) {
+        if (level->locations[cc.x][cc.y].flags & D_TRAPPED) {
             if (cc.x != m_mx(mon) || cc.y != m_my(mon))
                 goto outtrapmap;
             else
@@ -664,7 +650,7 @@ outtrapmap:
         /* make the door, and its trapped status, show up on the player's
            memory */
         if (!sobj || !sobj->cursed) {
-            if (level->locations[cc.x][cc.y].doormask & D_TRAPPED) {
+            if (level->locations[cc.x][cc.y].flags & D_TRAPPED) {
                 if (reveal) {
                     level->locations[cc.x][cc.y].mem_door_t = 1;
                     map_background(cc.x, cc.y, TRUE);
@@ -681,7 +667,7 @@ outtrapmap:
         else
             pline(msgc_youdiscover, "%s is granted an insight, and shares it with you!",
                   Monnam(mon));
-        win_pause_output(P_MAP);
+        look_at_map(u.ux, u.uy);
         doredraw();
         u.uinwater = uw;
         if (Underwater)
@@ -949,7 +935,7 @@ do_mapping(void)
     u.uinwater = uw;
     if (!level->flags.hero_memory || Underwater) {
         flush_screen(); /* flush temp screen */
-        win_pause_output(P_MAP);        /* wait */
+        look_at_map(u.ux, u.uy); /* wait */
         doredraw();
     }
 }
@@ -970,7 +956,7 @@ do_vicinity_map(void)
 
     if (!level->flags.hero_memory || Underwater) {
         flush_screen(); /* flush temp screen */
-        win_pause_output(P_MAP);        /* wait */
+        look_at_map(u.ux, u.uy); /* wait */
         doredraw();
     }
 }
@@ -979,7 +965,7 @@ do_vicinity_map(void)
 void
 cvt_sdoor_to_door(struct rm *loc, const d_level * dlev)
 {
-    int newmask = loc->doormask & ~WM_MASK;
+    int newmask = loc->flags & ~WM_MASK;
 
     if (Is_rogue_level(dlev))
         /* rogue didn't have doors, only doorways */
@@ -990,7 +976,7 @@ cvt_sdoor_to_door(struct rm *loc, const d_level * dlev)
         newmask |= D_CLOSED;
 
     loc->typ = DOOR;
-    loc->doormask = newmask;
+    loc->flags = newmask;
 }
 
 
@@ -1051,10 +1037,10 @@ openone(int zx, int zy, void *num)
     }
     if (level->locations[zx][zy].typ == SDOOR ||
         (level->locations[zx][zy].typ == DOOR &&
-         (level->locations[zx][zy].doormask & (D_CLOSED | D_LOCKED)))) {
+         (level->locations[zx][zy].flags & (D_CLOSED | D_LOCKED)))) {
         if (level->locations[zx][zy].typ == SDOOR)
             cvt_sdoor_to_door(&level->locations[zx][zy], &u.uz); /* typ=DOOR */
-        if (level->locations[zx][zy].doormask & D_TRAPPED) {
+        if (level->locations[zx][zy].flags & D_TRAPPED) {
             if (distu(zx, zy) < 3)
                 b_trapped("door", 0);
             else
@@ -1062,9 +1048,9 @@ openone(int zx, int zy, void *num)
                            cansee(zx, zy) ? "see" :
                            (canhear() ? "hear" : "feel the shock of"));
             wake_nearto(zx, zy, 11 * 11);
-            level->locations[zx][zy].doormask = D_NODOOR;
+            level->locations[zx][zy].flags = D_NODOOR;
         } else
-            level->locations[zx][zy].doormask = D_ISOPEN;
+            level->locations[zx][zy].flags = D_ISOPEN;
         unblock_point(zx, zy);
         newsym(zx, zy);
         (*(int *)num)++;
@@ -1150,7 +1136,7 @@ find_trap(struct trap *trap)
     pline(msgc_youdiscover, "You find %s.", an(trapexplain[tt - 1]));
 
     if (cleared) {
-        win_pause_output(P_MAP);        /* wait */
+        look_at_map(u.ux, u.uy); /* wait */
         doredraw();
     }
 }

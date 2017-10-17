@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -24,7 +24,6 @@ static void menu_identify(int, int);
 static boolean tool_in_use(struct obj *);
 static char obj_to_let(struct obj *);
 static int identify(struct monst *, struct obj *, int);
-static const char *dfeature_at(int, int);
 
 static void addinv_stats(struct obj *);
 static void freeinv_stats(struct obj *);
@@ -1333,6 +1332,7 @@ identify_pack(struct monst *mon, int id_limit,
     boolean vis = canseemon(mon);
 
     unid_cnt = 0;
+    any_unid_cnt = 0;
     the_obj = 0;        /* if unid_cnt ends up 1, this will be it */
     for (obj = mon->minvent; obj; obj = obj->nobj) {
         if (you) {
@@ -1866,7 +1866,7 @@ dotypeinv(const struct nh_cmd_arg *arg)
 
 /* return a string describing the dungeon feature at <x,y> if there
    is one worth mentioning at that location; otherwise null */
-static const char *
+const char *
 dfeature_at(int x, int y)
 {
     struct rm *loc = &level->locations[x][y];
@@ -1874,7 +1874,7 @@ dfeature_at(int x, int y)
     const char *dfeature = NULL;
 
     if (IS_DOOR(ltyp)) {
-        switch (loc->doormask) {
+        switch (loc->flags) {
         case D_NODOOR:
             cmap = S_ndoor;
             break;      /* "doorway" */
@@ -1905,7 +1905,7 @@ dfeature_at(int x, int y)
         cmap = S_sink;  /* "sink" */
     else if (IS_ALTAR(ltyp))
         dfeature = msgprintf("altar to %s (%s)", a_gname(),
-                             align_str(Amask2align(loc->altarmask & AM_MASK)));
+                             align_str(Amask2align(loc->flags & AM_MASK)));
     else if (x == level->sstairs.sx && y == level->sstairs.sy &&
                level->sstairs.up)
         cmap = S_upsstair;      /* "long ladder up" */
@@ -2094,6 +2094,7 @@ look_here(int obj_cnt,  /* obj_cnt > 0 implies that autopickup is in progess */
             pline(msgc_cancelled, "You can't reach the floor!");
             return 0;
         }
+        update_obj_memories_at(level, u.ux, u.uy);
     }
 
     if (dfeature)

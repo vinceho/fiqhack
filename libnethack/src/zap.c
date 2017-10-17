@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -16,7 +16,6 @@ static void zap_hit_mon(struct monst *, struct monst *,
 static void revive_egg(struct obj *);
 static boolean zap_steed(struct obj *);
 static void cancel_item(struct obj *);
-static void destroy_item(int, int);
 static boolean obj_shudders(struct obj *);
 static void do_osshock(struct obj *);
 static void bhit(struct monst *, int, int, int, struct obj *);
@@ -464,7 +463,7 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
             pline(combat_msgc(magr, mdef, cr_hit),
                   "%s blinded by the flash!", M_verbs(mdef, "are"));
 
-        if (dmg > 20 && !mx_eshk(mdef) && rn2(4)) {
+        if (!hityou && dmg > 20 && !mx_eshk(mdef) && rn2(4)) {
             if (rn2(4))
                 monflee(mdef, rnd(100), FALSE, TRUE);
             else
@@ -2654,7 +2653,6 @@ miss(const char *str, struct monst *mdef, struct monst *magr)
 static void
 bhit(struct monst *mon, int dx, int dy, int range, struct obj *obj) {
     struct monst *mdef;
-    struct obj *otmp;
     struct tmp_sym *tsym = NULL;
     uchar typ;
     boolean shopdoor = FALSE; /* for determining if you should pay for ruining a door */
@@ -2720,7 +2718,7 @@ bhit(struct monst *mon, int dx, int dy, int range, struct obj *obj) {
                 map_invisible(bhitpos.x, bhitpos.y);
             if (obj->otyp != EXPENSIVE_CAMERA || !invisible(mdef))
                 range -= 3;
-            bhitm(mon, mdef, obj, min(range, 1));
+            bhitm(mon, mdef, obj, max(range, 1));
         } else if ((mdef = vismon_at(level, bhitpos.x, bhitpos.y))) {
             pline(combat_msgc(mon, mdef, cr_miss),
                   "The %s passes through %s displaced image!",
@@ -2750,7 +2748,7 @@ bhit(struct monst *mon, int dx, int dy, int range, struct obj *obj) {
                 if (doorlock(obj, bhitpos.x, bhitpos.y)) {
                     if (you || vis)
                         makeknown(obj->otyp);
-                    if (level->locations[bhitpos.x][bhitpos.y].doormask ==
+                    if (level->locations[bhitpos.x][bhitpos.y].flags ==
                         D_BROKEN &&
                         *in_rooms(level, bhitpos.x, bhitpos.y, SHOPBASE)) {
                         shopdoor = TRUE;
@@ -2763,7 +2761,7 @@ bhit(struct monst *mon, int dx, int dy, int range, struct obj *obj) {
         if (!ZAP_POS(typ) ||
             (IS_DOOR(typ) &&
              (level->locations[bhitpos.x][bhitpos.y].
-              doormask & (D_LOCKED | D_CLOSED)))
+              flags & (D_LOCKED | D_CLOSED)))
             ) {
             bhitpos.x -= dx;
             bhitpos.y -= dy;
@@ -3093,8 +3091,13 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
                           "%s unharmed!", M_verbs(mdef, "are"));
             }
         }
-        if (resists_cold(mdef))
+        if (resists_cold(mdef)) {
             tmp += dice(nd, 3);
+            if (oseen && hallucinating(&youmonst))
+                pline(combat_msgc(magr, mdef, cr_hit),
+                      "It's super effective!");
+        }
+
         if (!resisted && selfzap && oseen)
             pline(you ? msgc_badidea : msgc_yafm,
                   "%s set %sself on fire!", M_verbs(mdef, "have"),
@@ -3103,25 +3106,30 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         golemeffects(mdef, AD_FIRE, tmp);
         if (raylevel != P_UNSKILLED && burnarmor(mdef)) {
             if (!rn2(3))
-                destroy_mitem(mdef, POTION_CLASS, AD_FIRE);
+                tmp += destroy_mitem(mdef, POTION_CLASS, AD_FIRE, NULL);
             if (!rn2(3))
-                destroy_mitem(mdef, SCROLL_CLASS, AD_FIRE);
+                tmp += destroy_mitem(mdef, SCROLL_CLASS, AD_FIRE, NULL);
             if (!rn2(5))
-                destroy_mitem(mdef, SPBOOK_CLASS, AD_FIRE);
+                tmp += destroy_mitem(mdef, SPBOOK_CLASS, AD_FIRE, NULL);
         }
         break;
     case ZT_COLD:
         ztyp = "cold";
         if (resists_cold(mdef))
             resisted = 1;
-        if (resists_fire(mdef))
+        if (resists_fire(mdef)) {
             tmp += dice(nd, 3);
+            if (oseen && hallucinating(&youmonst))
+                pline(combat_msgc(magr, mdef, cr_hit),
+                      "It's super effective!");
+        }
+
         if (!resisted && selfzap && oseen)
             pline(you ? msgc_badidea : msgc_yafm,
                   "%s a popsicle!", M_verbs(mdef, "imitate"));
         golemeffects(mdef, AD_COLD, tmp);
         if (raylevel != P_UNSKILLED && !rn2(3))
-            destroy_mitem(mdef, POTION_CLASS, AD_COLD);
+            tmp += destroy_mitem(mdef, POTION_CLASS, AD_COLD, NULL);
         break;
     case ZT_SLEEP:
         ztyp = "sleepy";
@@ -3257,7 +3265,7 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         }
         golemeffects(mdef, AD_ELEC, tmp);
         if (raylevel != P_UNSKILLED && !rn2(3))
-            destroy_mitem(mdef, WAND_CLASS, AD_ELEC);
+            tmp += destroy_mitem(mdef, WAND_CLASS, AD_ELEC, NULL);
         break;
     case ZT_POISON_GAS:
         ztyp = "affected";
@@ -3402,10 +3410,10 @@ melt_ice(struct level *lev, xchar x, xchar y)
     boolean visible = (lev == level && cansee(x, y));
 
     if (loc->typ == DRAWBRIDGE_UP)
-        loc->drawbridgemask &= ~DB_ICE; /* revert to DB_MOAT */
+        loc->flags &= ~DB_ICE; /* revert to DB_MOAT */
     else {      /* loc->typ == ICE */
-        loc->typ = (loc->icedpool == ICED_POOL ? POOL : MOAT);
-        loc->icedpool = 0;
+        loc->typ = (loc->flags == ICED_POOL ? POOL : MOAT);
+        loc->flags = 0;
     }
     obj_ice_effects(lev, x, y, FALSE);
     unearth_objs(lev, x, y);
@@ -3499,11 +3507,11 @@ zap_over_floor(xchar x, xchar y, int type, boolean * shopdamage)
         } else {
             rangemod -= 3;
             if (loc->typ == DRAWBRIDGE_UP) {
-                loc->drawbridgemask &= ~DB_UNDER;       /* clear lava */
-                loc->drawbridgemask |= (lava ? DB_FLOOR : DB_ICE);
+                loc->flags &= ~DB_UNDER;       /* clear lava */
+                loc->flags |= (lava ? DB_FLOOR : DB_ICE);
             } else {
                 if (!lava)
-                    loc->icedpool = (loc->typ == POOL ? ICED_POOL : ICED_MOAT);
+                    loc->flags = (loc->typ == POOL ? ICED_POOL : ICED_MOAT);
                 loc->typ = (lava ? ROOM : ICE);
             }
             bury_objs(level, x, y);
@@ -3598,7 +3606,7 @@ zap_over_floor(xchar x, xchar y, int type, boolean * shopdamage)
                 } else  /* caused by monster */
                     add_damage(x, y, 0L);
             }
-            loc->doormask = new_doormask;
+            loc->flags = new_doormask;
             unblock_point(x, y);        /* vision */
             if (cansee(x, y)) {
                 pline(msgc_consequence, "%s", see_txt);
@@ -3696,136 +3704,9 @@ struct destroy_message destroy_messages[num_destroy_msgs] = {
     {"breaks apart and explodes", "break apart and explode", "exploding wand"},
 };
 
-static void
-destroy_item(int osym, int dmgtyp)
-{
-    struct obj *obj, *obj2;
-    int dmg, xresist, skip;
-    long i, cnt, quan;
-    enum destroy_msg_type dindx;
-    const char *mult;
-
-    for (obj = youmonst.minvent; obj; obj = obj2) {
-        obj2 = obj->nobj;
-        if (obj->oclass != osym)
-            continue;   /* test only objs of type osym */
-        if (obj->oartifact)
-            continue;   /* don't destroy artifacts */
-        if (obj->in_use && obj->quan == 1)
-            continue;   /* not available */
-        xresist = skip = 0;
-        dmg = dindx = 0;
-        quan = 0L;
-
-        switch (dmgtyp) {
-        case AD_COLD:
-            if (osym == POTION_CLASS && obj->otyp != POT_OIL) {
-                quan = obj->quan;
-                dindx = destroy_msg_potion_cold;
-                dmg = rnd(4);
-            } else
-                skip++;
-            break;
-        case AD_FIRE:
-            xresist = (Fire_resistance && obj->oclass != POTION_CLASS);
-
-            if (obj->otyp == SCR_FIRE || obj->otyp == SPE_FIREBALL)
-                skip++;
-            if (obj->otyp == SPE_BOOK_OF_THE_DEAD) {
-                skip++;
-                if (!Blind)
-                    pline(msgc_noconsequence,
-                          "%s glows a strange %s, but remains intact.",
-                          The(xname(obj)), hcolor("dark red"));
-            }
-            quan = obj->quan;
-            switch (osym) {
-            case POTION_CLASS:
-                dindx = destroy_msg_potion_fire;
-                dmg = rnd(6);
-                break;
-            case SCROLL_CLASS:
-                dindx = destroy_msg_scroll_fire;
-                dmg = 1;
-                break;
-            case SPBOOK_CLASS:
-                dindx = destroy_msg_spellbook_fire;
-                dmg = 1;
-                break;
-            default:
-                skip++;
-                break;
-            }
-            break;
-        case AD_ELEC:
-            xresist = (Shock_resistance && obj->oclass != RING_CLASS);
-            quan = obj->quan;
-            switch (osym) {
-            case WAND_CLASS:
-                if (obj->otyp == WAN_LIGHTNING) {
-                    skip++;
-                    break;
-                }
-                dindx = destroy_msg_wand_elec;
-                dmg = rnd(10);
-                break;
-            default:
-                skip++;
-                break;
-            }
-            break;
-        default:
-            skip++;
-            break;
-        }
-        if (!skip) {
-            if (obj->in_use)
-                --quan; /* one will be used up elsewhere */
-            for (i = cnt = 0L; i < quan; i++)
-                if (!rn2(3))
-                    cnt++;
-
-            if (!cnt)
-                continue;
-            if (cnt == quan)
-                mult = "Your";
-            else
-                mult = (cnt == 1L) ? "One of your" : "Some of your";
-            pline(msgc_itemloss, "%s %s %s!", mult, xname(obj),
-                  (cnt > 1L) ? destroy_messages[dindx].singular
-                  : destroy_messages[dindx].plural);
-            if (osym == POTION_CLASS && dmgtyp != AD_COLD) {
-                if (!breathless(youmonst.data) || haseyes(youmonst.data))
-                    potionbreathe(&youmonst, obj);
-            }
-            setunequip(obj);
-
-            /* If destroying the item that (perhaps indirectly) caused the
-               destruction, we need to notify the caller, but obfree() does that
-               (via modifying turnstate), and obfree() is a better place (it
-               handles more possible reasons that the item might be
-               destroyed). */
-            for (i = 0; i < cnt; i++)
-                useup(obj);
-            if (dmg) {
-                if (xresist)
-                    pline(msgc_noconsequence, "You aren't hurt!");
-                else {
-                    const char *how = destroy_messages[dindx].killer;
-                    boolean one = (cnt == 1L);
-
-                    losehp(dmg, killer_msg(DIED, one ? an(how) :
-                                           makeplural(how)));
-                    exercise(A_STR, FALSE);
-                }
-            }
-        }
-    }
-    return;
-}
-
+/* Returns damage to be done. */
 int
-destroy_mitem(struct monst *mtmp, int osym, int dmgtyp)
+destroy_mitem(struct monst *mtmp, int osym, int dmgtyp, const char **killer)
 {
     /* Extrinsic properties protect against item destruction */
     if ((dmgtyp == AD_FIRE && ehas_property(mtmp, FIRE_RES)) ||
@@ -3834,36 +3715,37 @@ destroy_mitem(struct monst *mtmp, int osym, int dmgtyp)
         return 0;
 
     struct obj *obj, *obj2;
-    int skip, tmp = 0;
+    enum youprop resist = 0; /* for checking if damage should be done. */
+    int dmg = 0; /* final damage, stored so we don't stop mid-destruction. */
+    int cur_dmg = 0;
+    int skip = 0;
     long i, cnt, quan;
     enum destroy_msg_type dindx;
-    boolean vis;
+    boolean you = (mtmp == &youmonst);
+    boolean vis = (you || canseemon(mtmp));
     const char *mult;
 
-    if (mtmp == &youmonst) {    /* this simplifies artifact_hit() */
-        destroy_item(osym, dmgtyp);
-        return 0;       /* arbitrary; value doesn't matter to artifact_hit() */
-    }
-
-    vis = canseemon(mtmp);
     for (obj = mtmp->minvent; obj; obj = obj2) {
         obj2 = obj->nobj;
-        if (obj->oclass != osym)
+        if (obj->oclass != osym && osym != ALL_CLASSES)
             continue;   /* test only objs of type osym */
         skip = 0;
         quan = 0L;
         dindx = 0;
+        cur_dmg = 0;
 
         switch (dmgtyp) {
         case AD_COLD:
+            resist = COLD_RES;
             if (osym == POTION_CLASS && obj->otyp != POT_OIL) {
                 quan = obj->quan;
                 dindx = destroy_msg_potion_cold;
-                tmp++;
+                cur_dmg = rnd(4);
             } else
                 skip++;
             break;
         case AD_FIRE:
+            resist = FIRE_RES;
             if (obj->otyp == SCR_FIRE || obj->otyp == SPE_FIREBALL)
                 skip++;
             if (obj->otyp == SPE_BOOK_OF_THE_DEAD) {
@@ -3877,15 +3759,15 @@ destroy_mitem(struct monst *mtmp, int osym, int dmgtyp)
             switch (osym) {
             case POTION_CLASS:
                 dindx = destroy_msg_potion_fire;
-                tmp++;
+                cur_dmg = rnd(6);
                 break;
             case SCROLL_CLASS:
                 dindx = destroy_msg_scroll_fire;
-                tmp++;
+                cur_dmg = 1;
                 break;
             case SPBOOK_CLASS:
                 dindx = destroy_msg_spellbook_fire;
-                tmp++;
+                cur_dmg = 1;
                 break;
             default:
                 skip++;
@@ -3893,6 +3775,7 @@ destroy_mitem(struct monst *mtmp, int osym, int dmgtyp)
             }
             break;
         case AD_ELEC:
+            resist = SHOCK_RES;
             quan = obj->quan;
             switch (osym) {
             case WAND_CLASS:
@@ -3901,7 +3784,9 @@ destroy_mitem(struct monst *mtmp, int osym, int dmgtyp)
                     break;
                 }
                 dindx = destroy_msg_wand_elec;
-                tmp++;
+                if (obj->spe > 0)
+                    quan = obj->spe; /* drains charges */
+                /* Damage logic is below */
                 break;
             default:
                 skip++;
@@ -3913,12 +3798,45 @@ destroy_mitem(struct monst *mtmp, int osym, int dmgtyp)
             break;
         }
         if (!skip) {
-            for (i = cnt = 0L; i < quan; i++)
-                if (!rn2(3))
+            for (i = cnt = 0L; i < quan; i++) {
+                if (obj->blessed ? !rn2(16) :
+                    obj->cursed ? !rn2(2) :
+                    !rn2(4))
                     cnt++;
+            }
 
             if (!cnt)
                 continue;
+            if (obj->oclass == WAND_CLASS) {
+                cur_dmg = 6; /* for wands that exploded */
+                if (cnt != quan)
+                    cur_dmg = min(cnt, 6); /* otherwise */
+            }
+
+            if (!has_property(mtmp, resist) && cur_dmg) {
+                /* potentially update killer */
+                if (killer && cur_dmg >= rnd(dmg + cur_dmg)) {
+                    *killer = destroy_messages[dindx].killer;
+                    if (cnt == 1)
+                        *killer = an(*killer);
+                    else
+                        *killer = makeplural(*killer);
+                    if (obj->oclass == WAND_CLASS && cnt != quan)
+                        *killer = (cnt == 1) ? "a wand spark" : "wand sparks";
+                    *killer = killer_msg(DIED, *killer);
+                }
+                dmg += cur_dmg;
+            }
+
+            if (obj->oclass == WAND_CLASS && cnt != quan) {
+                obj->spe -= cnt;
+                if (vis)
+                    pline(msgc_itemloss, "%s %s emits %s!",
+                          s_suffix(Monnam(mtmp)),
+                          distant_name(obj, xname), cnt == 1 ?
+                          "a spark" : "several sparks");
+                continue;
+            }
             if (cnt == quan)
                 mult = "";
             else
@@ -3933,7 +3851,8 @@ destroy_mitem(struct monst *mtmp, int osym, int dmgtyp)
                 m_useup(mtmp, obj);
         }
     }
-    return tmp;
+
+    return dmg;
 }
 
 

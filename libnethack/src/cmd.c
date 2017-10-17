@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-10 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -17,7 +17,6 @@
 #define CMD_TRAVEL (char)0x90
 
 static int doservercancel(const struct nh_cmd_arg *);
-static int dotravel(const struct nh_cmd_arg *);
 static int doautoexplore(const struct nh_cmd_arg *);
 static int dowelcome(const struct nh_cmd_arg *);
 static int dointerrupt(const struct nh_cmd_arg *);
@@ -749,7 +748,7 @@ wiz_show_wmodes(const struct nh_cmd_arg *arg)
             if (x == u.ux && y == u.uy)
                 row[x] = '@';
             else if (IS_WALL(loc->typ) || loc->typ == SDOOR)
-                row[x] = '0' + (loc->wall_info & WM_MASK);
+                row[x] = '0' + (loc->flags & WM_MASK);
             else if (loc->typ == CORR)
                 row[x] = '#';
             else if (IS_ROOM(loc->typ) || IS_DOOR(loc->typ))
@@ -1557,6 +1556,18 @@ getargdir(const struct nh_cmd_arg *arg, const char *query,
     return getdir(query, dx, dy, dz, TRUE);
 }
 
+/* Calls a dummy getargpos to allow looking around. */
+void
+look_at_map(int x, int y)
+{
+    coord cc;
+    cc.x = x;
+    cc.y = y;
+    struct nh_cmd_arg dummyarg;
+    dummyarg.argtype = 0;
+    getargpos(&dummyarg, &cc, FALSE, "looking");
+}
+
 int
 getargpos(const struct nh_cmd_arg *arg, coord *cc, boolean force,
           const char *goal)
@@ -1814,34 +1825,6 @@ doautoexplore(const struct nh_cmd_arg *arg)
     action_incomplete("exploring", occ_autoexplore);
     return domove(&(struct nh_cmd_arg){.argtype = CMD_ARG_DIR, .dir = DIR_SELF},
                   exploration_interaction_status(), occ_autoexplore);
-}
-
-static int
-dotravel(const struct nh_cmd_arg *arg)
-{
-    /* Keyboard travel command */
-    coord cc;
-
-    cc.x = flags.travelcc.x;
-    cc.y = flags.travelcc.y;
-    if (cc.x == -1 && cc.y == -1) {
-        /* No cached destination, start attempt from current position */
-        cc.x = u.ux;
-        cc.y = u.uy;
-    }
-    if (!(arg->argtype & CMD_ARG_POS))
-        pline(msgc_uiprompt, "Where do you want to travel to?");
-    if (getargpos(arg, &cc, FALSE, "the desired destination") ==
-        NHCR_CLIENT_CANCEL) {
-        pline(msgc_cancelled, "Never mind.");
-        return 0;
-    }
-    flags.travelcc.x = u.tx = cc.x;
-    flags.travelcc.y = u.ty = cc.y;
-
-    action_incomplete("travelling", occ_travel);
-    return domove(&(struct nh_cmd_arg){.argtype = CMD_ARG_DIR, .dir = DIR_SELF},
-                  exploration_interaction_status(), occ_travel);
 }
 
 /*cmd.c*/
