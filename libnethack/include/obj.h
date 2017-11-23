@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-11 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-07 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -69,9 +69,12 @@ struct obj {
                  * historic and gender for statues
                  * last used movement for a stethoscope
                  */
-# define STATUE_HISTORIC 0x01
-# define STATUE_MALE     0x02
-# define STATUE_FEMALE   0x04
+# define OPM_HISTORIC 0x01 /* statues only */
+# define OPM_SPINACH  0x01 /* tins only */
+# define OPM_YOULAID  0x01 /* eggs only */
+# define OPM_MALE     0x02
+# define OPM_FEMALE   0x04
+# define OPM_HOMEMADE 0x08 /* tins only */
     char oclass;                /* object class */
     char invlet;                /* designation in inventory */
     char oartifact;             /* artifact array index */
@@ -110,10 +113,6 @@ struct obj {
 
     unsigned recharged:3;       /* number of times it's been recharged */
     unsigned lamplit:1;         /* a light-source -- can be lit */
-# ifdef INVISIBLE_OBJECTS
-    /* Note: there's no save/restore logic for oinvis */
-    unsigned oinvis:1;          /* invisible */
-# endif
     unsigned greased:1;         /* covered with grease */
 
     unsigned in_use:1;          /* for magic items before useup items */
@@ -124,7 +123,8 @@ struct obj {
 # define OM_NO_MEMORY   0 /* not an object memory */
 # define OM_MEMORY_OK   1 /* memory state is OK as far as we know */
 # define OM_MEMORY_LOST 2 /* we lost it, deallocate when mem_obj is NULL */
-    /* 1 free bit */
+    unsigned cknown:1;  /* container has been investigated */
+    /* No free bits */
 
     union {
         int corpsenm;           /* type of corpse is mons[corpsenm] */

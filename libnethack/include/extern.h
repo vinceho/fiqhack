@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Alex Smith, 2017-06-29 */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -97,6 +97,7 @@ extern boolean um_dist(xchar, xchar, xchar);
 extern boolean snuff_candle(struct obj *);
 extern boolean snuff_lit(struct obj *);
 extern boolean catch_lit(struct obj *);
+extern int use_pole(struct obj *, const struct nh_cmd_arg *);
 extern void use_unicorn_horn(struct obj *);
 extern boolean tinnable(const struct obj *);
 extern void fig_transform(void *, long);
@@ -130,7 +131,7 @@ extern long item_provides_extrinsic_before_oprop(const struct obj *,
 extern void uninvoke_artifact(struct obj *);
 extern int touch_artifact(struct obj *, const struct monst *);
 extern int spec_abon(struct obj *, struct monst *);
-extern int spec_dbon(struct obj *, struct monst *, int, boolean *);
+extern int spec_dbon(struct obj *, struct monst *, int, int *);
 extern void discover_artifact(xchar);
 extern boolean undiscovered_artifact(xchar);
 extern int disp_artifact_discoveries(struct nh_menulist *);
@@ -272,9 +273,6 @@ extern void rot_corpse(void *, long);
 
 /* ### display.c ### */
 
-# ifdef INVISIBLE_OBJECTS
-extern struct obj *vobj_at(xchar, xchar);
-# endif/* INVISIBLE_OBJECTS */
 extern void clear_memory_glyph(schar x, schar y, int to);
 extern void magic_map_background(xchar, xchar, int);
 extern void map_background(xchar, xchar, int);
@@ -332,7 +330,7 @@ extern void set_wall_state(struct level *lev);
 extern int dodrop(const struct nh_cmd_arg *);
 extern boolean boulder_hits_pool(struct obj *, int, int, boolean);
 extern boolean flooreffects(struct obj *, int, int, const char *);
-extern void doaltarobj(struct obj *);
+extern void doaltarobj(struct monst *, struct obj *);
 extern boolean canletgo(struct obj *, const char *);
 extern void dropx(struct obj *);
 extern void dropy(struct obj *);
@@ -403,6 +401,7 @@ extern void glibr(void);
 extern struct obj *some_armor(struct monst *);
 extern struct obj *stuck_ring(struct obj *, int);
 extern struct obj *unchanger(void);
+extern int disint_arm(struct monst *, struct obj *);
 extern int destroy_arm(struct monst *, struct obj *);
 
 /* ### dog.c ### */
@@ -628,6 +627,7 @@ extern void paniclog(const char *, const char *);
 extern boolean change_fd_lock(int fd, boolean on_logfile,
                               enum locktype type, int timeout);
 extern void flush_logfile_watchers(void);
+extern void update_whereis(boolean);
 
 /* ### fountain.c ### */
 
@@ -669,9 +669,11 @@ extern int dopickup(const struct nh_cmd_arg *);
 extern void lookaround(enum u_interaction_mode);
 extern int monster_nearby(void);
 extern void losehp(int, const char *);
+extern void xlosehp(int, const char *, boolean);
 extern int weight_cap(void);
 extern int inv_weight_over_cap(void);
 extern int inv_weight_total(void);
+extern int minv_weight_total(const struct monst *);
 extern int near_capacity(void);
 extern int calc_capacity(int);
 extern int max_capacity(void);
@@ -865,9 +867,6 @@ extern struct monst *makemon(const struct permonst *, struct level *lev, int,
                              int, int);
 extern boolean create_critters(int, const struct permonst *, int, int);
 extern const struct permonst *rndmonst(const d_level *, enum rng);
-extern void reset_rndmonst(int);
-extern void save_rndmonst_state(struct memfile *mf);
-extern void restore_rndmonst_state(struct memfile *mf);
 extern const struct permonst *mkclass(const d_level *dlev, char, int, enum rng);
 extern int adj_lev(const d_level *dlev, const struct permonst *ptr);
 extern int mongets(struct monst *, int, enum rng);
@@ -923,7 +922,8 @@ extern void show_obj_memories_at(struct level *, int, int);
 extern void update_obj_memories(struct level *);
 extern void update_obj_memories_at(struct level *, int, int);
 extern void update_container_memory(struct obj *);
-extern void update_obj_memory(struct obj *);
+extern int remembered_contained(const struct obj *);
+extern void update_obj_memory(struct obj *, struct monst *);
 extern void free_obj_memory(struct obj *);
 extern void free_memobj_chain(struct obj *);
 extern void free_memobj(void);
@@ -950,6 +950,7 @@ extern void extract_obj_memory(struct obj *);
 
 GEN_EXBASE_PROT(monst, m)
 GEN_EXBASE_PROT(obj, o)
+GEN_EXTYP_PROT(eyou, monst, m)
 GEN_EXTYP_PROT(edog, monst, m)
 GEN_EXTYP_PROT(epri, monst, m)
 GEN_EXTYP_PROT(eshk, monst, m)
@@ -1212,12 +1213,21 @@ extern boolean grudge(const struct permonst *, const struct permonst *);
 
 /* ### mondata.c ### */
 
+extern boolean is_new_pm(int);
+extern boolean is_removed_pm(int);
+extern int pm_offset(int);
+extern void new_mvitals(int);
+extern const char *pm_male(int);
+extern const char *pm_female(int);
+extern const char *pm_name(const struct monst *);
+extern const char *opm_name(const struct obj *);
 extern void set_mon_data(struct monst *, const struct permonst *);
 extern const struct attack *attacktype_fordmg(const struct permonst *, int,
                                               int);
 extern boolean attacktype(const struct permonst *, int);
 extern boolean poly_when_stoned(const struct permonst *);
 extern boolean resists_blnd(const struct monst *);
+extern boolean resists_slow(const struct monst *);
 extern boolean can_blnd(struct monst *, struct monst *, uchar, struct obj *);
 extern int mon_bon(struct monst *, int, int);
 extern boolean distant(const struct monst *);
@@ -1235,7 +1245,7 @@ extern int max_passive_dmg(const struct monst *, const struct monst *);
 extern int monsndx(const struct permonst *);
 extern int name_to_mon(const char *);
 extern int gender(struct monst *);
-extern int pronoun_gender(struct monst *);
+extern int pronoun_gender(const struct monst *);
 extern boolean levl_follower(struct monst *);
 extern int little_to_big(int);
 extern int big_to_little(int);
@@ -1261,7 +1271,7 @@ extern int m_move(struct monst *, int);
 extern boolean closed_door(struct level *lev, int x, int y);
 extern boolean accessible(int, int);
 extern void set_apparxy(struct monst *);
-extern boolean can_ooze(struct monst *);
+extern boolean can_ooze(const struct monst *);
 
 /* ### mplayer.c ### */
 
@@ -1299,7 +1309,7 @@ extern int mgetargpos(const struct musable *, coord *, boolean, const char *);
 extern struct obj *mgetargobj(const struct musable *, const char *, const char *);
 extern boolean mgetargspell(const struct musable *, int *);
 extern int mon_choose_dirtarget(const struct monst *, struct obj *, coord *);
-extern int mon_choose_spectarget(const struct monst *, struct obj *, coord *);
+extern int mon_choose_spectarget(struct musable *, struct obj *, coord *);
 extern boolean find_unlocker(struct monst *, struct musable *);
 extern boolean find_item(struct monst *, struct musable *);
 extern boolean find_item_obj(struct obj *, struct musable *, boolean, int);
@@ -1532,6 +1542,7 @@ extern boolean any_property(struct monst *);
 extern int pm_has_property(const struct permonst *, enum youprop);
 extern unsigned m_has_property(const struct monst *, enum youprop,
                                unsigned, boolean);
+extern unsigned has_immunity(const struct monst *, enum youprop);
 extern boolean m_helpless(const struct monst *, enum helpless_mask mask);
 extern boolean u_helpless(enum helpless_mask mask);
 extern unsigned msensem_xy(struct monst *, struct monst *,
@@ -1776,9 +1787,12 @@ extern int monspellprot(struct monst *);
 extern int mon_castable(const struct monst *, int, boolean);
 extern int spelleffects(boolean, struct musable *);
 extern boolean learn_spell(int, boolean, boolean);
+extern int throwspell(boolean, boolean, schar *dx, schar *dy,
+                      const struct musable *);
 extern boolean cast_protection(struct monst *, boolean, boolean);
 extern void losespells(void);
 extern int dovspell(const struct nh_cmd_arg *arg);
+extern void show_monster_spells(const struct monst *);
 extern void quiver_spell(void);
 extern void dump_spells(void);
 extern void initialspell(struct obj *);
@@ -1881,6 +1895,8 @@ extern int wiz_timeout_queue(const struct nh_cmd_arg *);
 
 /* ### topten.c ### */
 
+extern void munge_xlstring(char *, const char *, int);
+extern unsigned long encode_conduct(void);
 extern void update_topten(int how, const char *killer,
                           unsigned long carried, const char *dumpname);
 extern struct obj *tt_oname(struct obj *);

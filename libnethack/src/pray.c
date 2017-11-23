@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-14 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
 /* Copyright (c) Benson I. Margulies, Mike Stephenson, Steve Linhart, 1989. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -22,6 +22,7 @@ static void gods_upset(aligntyp);
 static void consume_offering(struct obj *);
 static boolean water_prayer(boolean);
 static boolean blocked_boulder(int, int);
+static void set_prayreminder(struct monst *, enum pray_type);
 
 /* simplify a few tests */
 #define Cursed_obj(obj,typ) ((obj) && (obj)->otyp == (typ) && (obj)->cursed)
@@ -434,7 +435,7 @@ god_zaps_you(aligntyp resp_god)
         pline(msgc_alignbad,
               "Suddenly a bolt of lightning comes down at you from the "
               "heavens!");
-        if (!resists_elec(u.ustuck)) {
+        if (!immune_to_elec(u.ustuck)) {
             pline(combat_msgc(NULL, u.ustuck, cr_hit),
                   "%s is hit by it, and fries to a crisp!", Monnam(u.ustuck));
             /* Yup, you get experience.  It takes guts to successfully pull off
@@ -452,7 +453,9 @@ god_zaps_you(aligntyp resp_god)
             else
                 mon_reflects(&youmonst, NULL, FALSE, 
                              "%s reflects from %s %s.", "It");
-        } else if (Shock_resistance) {
+        } else if (immune_to_elec(&youmonst)) {
+            /* You need full immunity to be protected, gods aren't deterred
+               by resistances. */
             shieldeff(u.ux, u.uy);
             pline(msgc_playerimmune, "It seems not to affect you.");
         } else
@@ -584,6 +587,7 @@ angrygods(aligntyp resp_god)
         break;
     }
     u.ublesscnt = rnz(300);
+    set_prayreminder(&youmonst, pty_anger);
     return;
 }
 
@@ -1068,6 +1072,7 @@ pleased(aligntyp g_align)
     if (kick_on_butt)
         u.ublesscnt += kick_on_butt * rnz(1000);
 
+    set_prayreminder(&youmonst, pty_favour);
     return;
 }
 
@@ -1087,6 +1092,8 @@ water_prayer(boolean bless_water)
             otmp->blessed = bless_water;
             otmp->cursed = !bless_water;
             otmp->bknown = bc_known;
+            if (bc_known)
+                makeknown(POT_WATER);
             changed += otmp->quan;
         } else if (otmp->oclass == POTION_CLASS)
             other = TRUE;
@@ -1471,6 +1478,7 @@ dosacrifice(const struct nh_cmd_arg *arg)
                     /* Beware, Conversion is costly */
                     change_luck(-3);
                     u.ublesscnt += 300;
+                    set_prayreminder(&youmonst, pty_conversion);
                     adjalign((int)(u.ualignbase[A_ORIGINAL] * (ALIGNLIM / 2)));
                 } else {
                     u.ugangr += 3;
@@ -1549,6 +1557,7 @@ dosacrifice(const struct nh_cmd_arg *arg)
 
                     if ((int)u.uluck < 0)
                         u.uluck = 0;
+                    set_prayreminder(&youmonst, pty_mollified);
                 }
             } else {    /* not satisfied yet */
                 if (Hallucination)
@@ -1586,6 +1595,7 @@ dosacrifice(const struct nh_cmd_arg *arg)
                               "You have a feeling of reconciliation.");
                     if ((int)u.uluck < 0)
                         u.uluck = 0;
+                    set_prayreminder(&youmonst, pty_reconciled);
                 }
             }
         } else {
@@ -1615,6 +1625,7 @@ dosacrifice(const struct nh_cmd_arg *arg)
                                        artiname(otmp->oartifact), u_gname());
                         u.ugifts++;
                         u.ublesscnt = rnz(300 + (50 * nartifacts));
+                        set_prayreminder(&youmonst, pty_gift);
                         exercise(A_WIS, TRUE);
                         /* make sure we can use this weapon */
                         unrestrict_weapon_skill(weapon_type(otmp));
@@ -2110,6 +2121,17 @@ blocked_boulder(int dx, int dy)
         return TRUE;
 
     return FALSE;
+}
+
+static void
+set_prayreminder(struct monst *mon, enum pray_type result)
+{
+    struct eyou *you = mx_eyou(mon);
+    if (!you)
+        return;
+
+    you->last_pray_action = moves;
+    you->prayed_result = result;
 }
 
 /*pray.c*/

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-02 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -184,7 +184,6 @@ losexp(const char *killer, boolean override_res)
         pline(msgc_intrloss, "%s level %d.", Goodbye(), u.ulevel--);
         /* remove intrinsic abilities */
         adjabil(u.ulevel + 1, u.ulevel);
-        reset_rndmonst(NON_PM); /* new monster selection */
     } else {
         if (killer)
             done(DIED, killer);
@@ -250,11 +249,13 @@ mlosexp(struct monst *magr, struct monst *mdef, const char *killer,
         pline(combat_msgc(magr, mdef, cr_hit),
               "%s suddenly seems weaker!", Monnam(mdef));
 
-    int hp_loss = min(mdef->mhpmax - 1, rnd(8));
+    int hp_loss = rnd(8);
+    hp_loss = min(mdef->mhpmax - 1, hp_loss);
     mdef->mhpmax -= hp_loss;
     mdef->mhp -= min(mdef->mhp - 1, hp_loss);
 
-    int pw_loss = min(mdef->pwmax, mon_pw_gain(mdef));
+    int pw_loss = mon_pw_gain(mdef);
+    pw_loss = min(mdef->pwmax, pw_loss);
     mdef->pwmax -= pw_loss;
     mdef->pw -= min(mdef->pw, pw_loss);
 
@@ -320,7 +321,6 @@ pluslvl(boolean incr)
         }
         pline(msgc_intrgain, "Welcome to experience level %d.", u.ulevel);
         adjabil(u.ulevel - 1, u.ulevel);        /* give new intrinsics */
-        reset_rndmonst(NON_PM); /* new monster selection */
     }
 }
 
@@ -416,8 +416,6 @@ grow_up(struct monst *mtmp,   /* `mtmp' might "grow up" into a bigger version */
        little and big forms */
     oldtype = monsndx(ptr);
     newtype = little_to_big(oldtype);
-    if (newtype == PM_PRIEST && mtmp->female)
-        newtype = PM_PRIESTESS;
 
     /* growth limits differ depending on method of advancement */
     if (victim) {       /* killed a monster */
@@ -471,7 +469,7 @@ grow_up(struct monst *mtmp,   /* `mtmp' might "grow up" into a bigger version */
             if (sensemon(mtmp))
                 pline(mtmp->mtame ? msgc_petfatal : msgc_monneutral,
                       "As %s grows up into %s, %s %s!", mon_nam(mtmp),
-                      an(ptr->mname), mhe(mtmp),
+                      an(mtmp->female ? ptr->fname : ptr->mname), mhe(mtmp),
                       nonliving(ptr) ? "expires" : "dies");
             set_mon_data(mtmp, ptr);        /* keep mvitals[] accurate */
             mondied(mtmp);

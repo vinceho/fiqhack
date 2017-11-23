@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-15 */
+/* Last modified by Alex Smith, 2017-09-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -106,10 +106,11 @@ boulder_hits_pool(struct obj * otmp, int rx, int ry, boolean pushing)
                 pline(msgc_consequence, "You find yourself on dry land again!");
             } else if (lava && distu(rx, ry) <= 2) {
                 pline(msgc_nonmonbad, "You are hit by molten lava%c",
-                      Fire_resistance ? '.' : '!');
+                      resists_fire(&youmonst) ? '.' : '!');
                 burn_away_slime(&youmonst);
-                losehp(dice((Fire_resistance ? 1 : 3), 6),
-                       killer_msg(DIED, "molten lava"));
+                if (!immune_to_fire(&youmonst))
+                    losehp(dice((resists_fire(&youmonst) ? 1 : 3), 6),
+                           killer_msg(DIED, "molten lava"));
             } else if (!fills_up && (pushing ? !Blind : cansee(rx, ry)))
                 pline(msgc_noconsequence, "It sinks without a trace!");
         }
@@ -225,45 +226,76 @@ flooreffects(struct obj * obj, int x, int y, const char *verb)
 
 
 void
-doaltarobj(struct obj *obj)
+doaltarobj(struct monst *mon, struct obj *obj)
 {       /* obj is an object dropped on an altar */
-    if (Blind)
-        return;
+    boolean you = (mon == &youmonst);
+    /* does a monster that isn't you see it? */
+    boolean mvis = (!you && !blind(mon));
+    /* do you? */
+    boolean vis = (!blind(&youmonst) && (you || mon == u.usteed));
+    /* not canseemon() -- those are too faint */
 
-    /* KMH, conduct */
-    break_conduct(conduct_gnostic);
+    /* Only if you drop it, or if you steed does (which is rare and
+       controllable), will you see flashes (or lack of), and break conduct.
+       This is avoidable by your own actions, and thus shouldn't cause
+       frustration. */
+    if (vis)
+        break_conduct(conduct_gnostic);
 
     if ((obj->blessed || obj->cursed) && obj->oclass != COIN_CLASS) {
-        pline_implied(msgc_hint, "There is %s flash as %s %s the altar.",
-                      an(hcolor(obj->blessed ? "amber" : "black")), doname(obj),
-                      otense(obj, "hit"));
-        if (!Hallucination)
+        if (vis)
+            pline_implied(msgc_hint, "There is %s flash as %s %s the altar.",
+                          an(hcolor(obj->blessed ? "amber" : "black")),
+                          doname(obj), otense(obj, "hit"));
+        if (vis && !hallucinating(&youmonst))
             obj->bknown = 1;
+        if (mvis && !hallucinating(mon))
+            obj->mbknown = 1;
     } else {
-        pline_implied(msgc_noconsequence, "%s %s on the altar.", Doname2(obj),
-                      otense(obj, "land"));
-        obj->bknown = 1;
+        if (vis) {
+            pline_implied(msgc_noconsequence, "%s %s on the altar.",
+                          Doname2(obj), otense(obj, "land"));
+            obj->bknown = 1;
+        }
+        if (mvis)
+            obj->mbknown = 1;
     }
-    /* Also BCU one level deep inside containers */
-    if (Has_contents(obj)) {
-        int bcucount = 0;
+    /* Also BCU one level deep inside containers unless it's locked */
+    if (Has_contents(obj) && !obj->olocked && obj->cknown) {
+        int blessed = 0;
+        int cursed = 0;
+        int bccount = 0;
         struct obj *otmp;
 
         for (otmp = obj->cobj; otmp; otmp = otmp->nobj) {
             if (otmp->blessed || otmp->cursed)
-                bcucount++;
-            if (!Hallucination)
+                bccount++;
+            if (otmp->blessed)
+                blessed++;
+            if (otmp->cursed)
+                cursed++;
+            /* yes, also for uncursed, it's hard to make things out */
+            if (hallucinating(mon))
+                continue;
+            /* Not vis, if you are on a mount, you can't "look into the
+               container" */
+            if (you)
                 otmp->bknown = 1;
+            if (mvis)
+                otmp->mbknown = 1;
         }
-        if (bcucount == 1) {
-            pline_implied(msgc_hint,
-                          "Looking inside %s, you see a colored flash.",
-                          the(xname(obj)));
-        } else if (bcucount > 1) {
-            pline_implied(msgc_hint,
-                          "Looking inside %s, you see colored flashes.",
-                          the(xname(obj)));
-        }
+        if (!you)
+            return; /* no messages for monsters about this */
+
+        if (bccount)
+            pline_implied(msgc_info,
+                          "Looking inside %s, you see %s flash%s.",
+                          the(xname(obj)), bccount == 1 ?
+                          an(hcolor(blessed ? "amber" : "black")) :
+                          !cursed ? hcolor("amber") :
+                          !blessed ? hcolor("black") :
+                          hallucinating(&youmonst) ? "pretty rainbow-colored" :
+                          "colored", bccount == 1 ? "" : "es");
     }
 }
 
@@ -290,13 +322,13 @@ dosinkring(struct obj *obj)  /* obj is a ring being dropped over a sink */
     case RIN_LEVITATION:
         pline(msgc_info, "The sink quivers upward for a moment.");
         break;
-    case RIN_POISON_RESISTANCE:
+    case RIN_POISON_IMMUNITY:
         pline(msgc_info, "You smell rotten %s.", makeplural(fruitname(FALSE)));
         break;
     case RIN_AGGRAVATE_MONSTER:
         pline(msgc_info, "Several flies buzz angrily around the sink.");
         break;
-    case RIN_SHOCK_RESISTANCE:
+    case RIN_SHOCK_IMMUNITY:
         pline(msgc_info, "Static electricity surrounds the sink.");
         break;
     case RIN_CONFLICT:
@@ -365,11 +397,11 @@ dosinkring(struct obj *obj)  /* obj is a ring being dropped over a sink */
             pline(msgc_info,
                   "The sink seems to blend into the floor for a moment.");
             break;
-        case RIN_FIRE_RESISTANCE:
+        case RIN_FIRE_IMMUNITY:
             pline(msgc_info,
                   "The hot water faucet flashes brightly for a moment.");
             break;
-        case RIN_COLD_RESISTANCE:
+        case RIN_COLD_IMMUNITY:
             pline(msgc_info,
                   "The cold water faucet flashes brightly for a moment.");
             break;
@@ -519,7 +551,7 @@ dropx(struct obj *obj)
         if (ship_object(obj, u.ux, u.uy, FALSE))
             return;
         if (IS_ALTAR(level->locations[u.ux][u.uy].typ))
-            doaltarobj(obj);    /* set bknown */
+            doaltarobj(&youmonst, obj);    /* set bknown */
     }
     dropy(obj);
 }
@@ -1074,8 +1106,6 @@ goto_level(d_level * newlevel, boolean at_stairs, boolean falling,
             dunlev_reached(&u.uz) = dunlev(&u.uz);
     }
 
-    reset_rndmonst(NON_PM);     /* u.uz change affects monster generation */
-
     origlev = level;
     level = NULL;
 
@@ -1540,10 +1570,6 @@ revive_corpse(struct obj *corpse)
     struct obj *container = NULL;
     int container_where = 0;
 
-#ifdef INVISIBLE_OBJECTS
-    boolean vis = !corpse->oinvis || See_invisible;
-#endif
-
     where = corpse->where;
     is_uwep = corpse == uwep;
     cname = corpse_xname(corpse, TRUE); 
@@ -1575,11 +1601,7 @@ revive_corpse(struct obj *corpse)
             break;
 
         case OBJ_FLOOR:
-            if (cansee(mtmp->mx, mtmp->my)
-#ifdef INVISIBLE_OBJECTS
-                && vis
-#endif
-                )
+            if (cansee(mtmp->mx, mtmp->my))
                 pline(msgc_levelwarning, "%s rises from the dead!",
                       chewed ? Adjmonnam(mtmp, "bite-covered") : Monnam(mtmp));
             break;

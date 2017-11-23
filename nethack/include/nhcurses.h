@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-15 */
 /* Copyright (c) Daniel Thaler, 2011                              */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -422,24 +422,23 @@ struct win_scrollable {
 
 
 # define MAXCOLS 16
-/* Note: the win_scrollable must be the first entry of this struct (because
-   a struct win_menu pointer is sometimes cast to a struct win_scrollable
-   pointer) */
+/* Note: everything up to title must be kept in sync with win_objmenu, because
+   a win_objmenu can be cast as a win_menu. In addition, win_scrollable must
+   be the first item because it can also be case into a win_scrollable. */
 struct win_menu {
     struct win_scrollable s;
     struct nh_menuitem **visitems;
-    char **visselected;
+    int **visselected;
     const char *title;
     int how;
     int colpos[MAXCOLS], maxcol;
 };
 
-/* Note: the win_scrollable must be the first entry of this struct, for the same
-   reason as with win_menu */
+/* Note: everything up to title must be kept in sync with win_menu, see above */
 struct win_objmenu {
     struct win_scrollable s;
-    struct nh_objitem *items;
-    int *selected;
+    struct nh_objitem **visitems;
+    int **visselected;
     const char *title;
     int how, selcount;
 };

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -278,10 +278,10 @@ m_dowear_type(struct monst *mon, enum objslot slot, boolean creation,
                  obj->otyp != RIN_HUNGER &&
                  obj->otyp != RIN_AGGRAVATE_MONSTER &&
                  obj->otyp != RIN_WARNING &&
-                 obj->otyp != RIN_POISON_RESISTANCE &&
-                 obj->otyp != RIN_FIRE_RESISTANCE &&
-                 obj->otyp != RIN_COLD_RESISTANCE &&
-                 obj->otyp != RIN_SHOCK_RESISTANCE &&
+                 obj->otyp != RIN_POISON_IMMUNITY &&
+                 obj->otyp != RIN_FIRE_IMMUNITY &&
+                 obj->otyp != RIN_COLD_IMMUNITY &&
+                 obj->otyp != RIN_SHOCK_IMMUNITY &&
                  obj->otyp != RIN_FREE_ACTION &&
                  obj->otyp != RIN_SLOW_DIGESTION &&
                  obj->otyp != RIN_TELEPORTATION &&
@@ -795,7 +795,7 @@ mon_break_armor(struct monst *mon, boolean polyspot)
         if (touch_petrifies(u.usteed->data) && !Stone_resistance && rnl(3)) {
             pline(msgc_fatal_predone, "You touch %s.", mon_nam(u.usteed));
             instapetrify(killer_msg(STONING,
-                msgcat("falling of ", an(u.usteed->data->mname))));
+                                    msgcat("falling of ", an(pm_name(u.usteed)))));
         }
         dismount_steed(DISMOUNT_FELL);
     }
@@ -840,7 +840,6 @@ extra_pref(const struct monst *mon, struct obj *obj)
         /* nymphs or foocubi like adornment */
         if (obj->otyp == RIN_ADORNMENT &&
             (mon->data->mlet == S_NYMPH ||
-             monsndx(mon->data) == PM_SUCCUBUS ||
              monsndx(mon->data) == PM_INCUBUS))
             desire += 20;
         else if (obj->spe <= 0 && obj->mknown) /* even if they're badly enchanted */
@@ -869,7 +868,7 @@ extra_pref(const struct monst *mon, struct obj *obj)
     case RIN_FREE_ACTION:
     case RIN_SLOW_DIGESTION: /* only way for monsters to avoid digestion instadeath */
         return 50;
-    case RIN_POISON_RESISTANCE:
+    case RIN_POISON_IMMUNITY:
     case RIN_REGENERATION:
     case AMULET_OF_REFLECTION:
         return 40;
@@ -877,9 +876,9 @@ extra_pref(const struct monst *mon, struct obj *obj)
     case AMULET_VERSUS_POISON:
     case AMULET_OF_ESP:
         return 30;
-    case RIN_FIRE_RESISTANCE:
-    case RIN_COLD_RESISTANCE:
-    case RIN_SHOCK_RESISTANCE:
+    case RIN_FIRE_IMMUNITY:
+    case RIN_COLD_IMMUNITY:
+    case RIN_SHOCK_IMMUNITY:
     case AMULET_OF_MAGICAL_BREATHING:
     case AMULET_OF_UNCHANGING:
         return 20;

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
 /* Copyright (c) M. Stephenson 1988                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -49,9 +49,8 @@ spellname(int spell)
 static boolean cursed_book(struct monst *, struct obj *bp);
 static boolean confused_book(struct monst *, struct obj *);
 static int learn(void);
-static boolean dospellmenu(const char *, int, int *);
+static boolean dospellmenu(const struct monst *, const char *, int, int *);
 static int percent_success(const struct monst *, int);
-static int throwspell(boolean, schar *dx, schar *dy, const struct musable *arg);
 static void spell_backfire(int);
 static int spellindex_by_typ(int);
 static void run_maintained_spell(struct monst *, int);
@@ -85,7 +84,7 @@ static const char *spelltypemnemonic(int);
  *
  *  spelspec, spelsbon:
  *      Arc map masters (SPE_MAGIC_MAPPING)
- *      Bar fugue/berserker (SPE_HASTE_SELF)
+ *      Bar fugue/berserker (SPE_SPEED_MONSTER)
  *      Cav born to dig (SPE_DIG)
  *      Hea to heal (SPE_CURE_SICKNESS)
  *      Kni to turn back evil (SPE_TURN_UNDEAD)
@@ -134,8 +133,9 @@ cursed_book(struct monst *mon, struct obj *bp)
         if (you) {
             pline(msgc_statusbad, "You feel threatened.");
             aggravate();
-        } else
-            you_aggravate(mon);
+        }
+
+        inc_timeout(mon, AGGRAVATE_MONSTER, 1, FALSE);
         break;
     case 2:
         set_property(mon, BLINDED, rn1(100, 250), FALSE);
@@ -158,6 +158,13 @@ cursed_book(struct monst *mon, struct obj *bp)
                       ERODE_CORRODE, TRUE, TRUE);
             break;
         }
+        if (immune_to_poison(mon)) {
+            if (you || canseemon(mon))
+                pline(combat_msgc(NULL, mon, cr_immune),
+                      "%s unharmed.", M_verbs(mon, "seem"));
+            break;
+        }
+
         /* Temporarily disable in_use; death should not destroy the book.
 
            Paranoia: ensure that we don't turn /on/ in_use, that causes a
@@ -167,9 +174,9 @@ cursed_book(struct monst *mon, struct obj *bp)
         was_inuse = bp->in_use;
         bp->in_use = FALSE;
         if (you) {
-            losestr(Poison_resistance ? rn1(2, 1) : rn1(4, 3), DIED,
+            losestr(resists_poison(&youmonst) ? rn1(2, 1) : rn1(4, 3), DIED,
                     killer_msg(DIED, "a contact-poisoned spellbook"), NULL);
-            losehp(rnd(Poison_resistance ? 6 : 10),
+            losehp(rnd(resists_poison(&youmonst) ? 6 : 10),
                    killer_msg(DIED, "a contact-poisoned spellbook"));
         } else {
             /* do a bit more damage since monsters can't lose str */
@@ -474,10 +481,8 @@ learn(void)
         pline(msgc_actionok, "The spellbook disappears.");
         if (!u.utracked[tos_book])
             impossible("Spellbook already gone?");
-        else {
-            obj_extract_self(u.utracked[tos_book]);
-            obfree(u.utracked[tos_book], NULL);
-        }
+        else
+            useup(u.utracked[tos_book]);
     }
 
     return 0;
@@ -788,7 +793,7 @@ run_maintained_spells(struct level *lev)
 
     struct monst *mon;
     for (mon = lev->monlist; mon; mon = mon->nmon) {
-        if (DEADMONSTER(mon) || !spell_maintained(mon, spell))
+        if (DEADMONSTER(mon))
             continue;
 
         if (confused(mon)) {
@@ -839,7 +844,7 @@ run_maintained_spell(struct monst *mon, int spell)
 {
     struct obj *pseudo;
     switch (spell) {
-    case SPE_HASTE_SELF:
+    case SPE_SPEED_MONSTER:
         if (property_timeout(mon, FAST) < 5)
             inc_timeout(mon, FAST, 50, TRUE);
         break;
@@ -890,7 +895,7 @@ run_maintained_spell(struct monst *mon, int spell)
         break;
     default:
         impossible("%s maintaining an unmaintainable spell? (%d)",
-                   mon == &youmonst ? "player" : k_monnam(mon), spell);
+                   k_monnam(mon), spell);
         spell_unmaintain(mon, spell);
         break;
     }
@@ -1036,7 +1041,8 @@ age_spells(void)
 boolean
 getspell(int *spell_no)
 {
-    boolean ret = dospellmenu("Choose which spell to cast", SPELLMENU_CAST, spell_no);
+    boolean ret = dospellmenu(&youmonst, "Choose which spell to cast", SPELLMENU_CAST,
+                              spell_no);
     flags.last_arg.argtype &= ~CMD_ARG_SPELL;
     if (ret) {
         flags.last_arg.argtype |= CMD_ARG_SPELL;
@@ -1078,7 +1084,8 @@ docastalias(const struct nh_cmd_arg *arg)
         }
     }
 
-    if (!dospellmenu("Choose which spell to alias", SPELLMENU_QUIVER, &splnum))
+    if (!dospellmenu(&youmonst, "Choose which spell to alias",
+                     SPELLMENU_QUIVER, &splnum))
         return 0;
     spl_book[splnum].sp_key = arg->key;
 
@@ -1347,7 +1354,7 @@ spell_backfire(int spell)
                     rand <= 7 ? (2 * duration / 3) :
                     rand <= 9 ? (duration / 3) :
                     0, TRUE);
-    if (rand <= 4)
+    if (rand <= 4 && !resists_stun(&youmonst))
         inc_timeout(&youmonst, STUNNED,
                     rand <= 4 ? 0 :
                     rand <= 7 ? (duration / 3) :
@@ -1454,7 +1461,7 @@ mon_wants_to_maintain(const struct monst *mon, int spell)
         return TRUE;
 
     chk_spell(SPE_PROTECTION);
-    chk_spell(SPE_HASTE_SELF);
+    chk_spell(SPE_SPEED_MONSTER);
     if (mprof(mon, MP_SDIVN) >= P_SKILLED) {
         chk_spell(SPE_DETECT_MONSTERS);
     }
@@ -1529,7 +1536,7 @@ spelleffects(boolean atme, struct musable *m)
     }
 
     if (maintained) {
-        spell_unmaintain(&youmonst, spell);
+        spell_unmaintain(mon, spell);
         if (you)
             pline(msgc_cancelled, "Spell no longer maintained.");
 
@@ -1549,7 +1556,7 @@ spelleffects(boolean atme, struct musable *m)
     case SPE_FIREBALL:
         /* If Skilled or better, get a specific space. */
         if (role_skill >= P_SKILLED) {
-            if (throwspell(thrownasty, &dx, &dy, m)) {
+            if (throwspell(FALSE, thrownasty, &dx, &dy, m)) {
                 dz = 0;
                 break;
             }
@@ -1580,6 +1587,7 @@ spelleffects(boolean atme, struct musable *m)
     case SPE_EXTRA_HEALING:
     case SPE_DRAIN_LIFE:
     case SPE_STONE_TO_FLESH:
+    case SPE_SPEED_MONSTER:
         if (atme)
             dx = dy = dz = 0;
         else if (!mgetargdir(m, NULL, &dx, &dy, &dz)) {
@@ -1595,10 +1603,14 @@ spelleffects(boolean atme, struct musable *m)
             return 0;
         }
         break;
+    default:
+        break;
+    }
 
     /* These spells can be toggled for whether or not to maintain it */
+    switch (spell) {
     case SPE_LIGHT:
-    case SPE_HASTE_SELF:
+    case SPE_SPEED_MONSTER:
     case SPE_DETECT_MONSTERS:
     case SPE_LEVITATION:
     case SPE_INVISIBILITY:
@@ -1638,7 +1650,7 @@ spelleffects(boolean atme, struct musable *m)
             return 0;
         }
 
-        if (spellknow(spell_index) <= 0) {
+        if (!spellknow(spell_index)) {
             pline(msgc_substitute, "Your knowledge of this spell is twisted.");
             pline_implied(msgc_statusbad,
                           "It invokes nightmarish images in your mind...");
@@ -1832,6 +1844,7 @@ spelleffects(boolean atme, struct musable *m)
     case SPE_EXTRA_HEALING:
     case SPE_DRAIN_LIFE:
     case SPE_STONE_TO_FLESH:
+    case SPE_SPEED_MONSTER:
         weffects(mon, pseudo, dx, dy, dz);
         update_inventory();     /* spell may modify inventory */
         break;
@@ -1853,7 +1866,6 @@ spelleffects(boolean atme, struct musable *m)
         break;
 
         /* these are all duplicates of potion effects */
-    case SPE_HASTE_SELF:
     case SPE_DETECT_TREASURE:
     case SPE_DETECT_MONSTERS:
     case SPE_LEVITATION:
@@ -1929,7 +1941,8 @@ spelleffects(boolean atme, struct musable *m)
         set_property(mon, PASSES_WALLS, rn1(40, 21), FALSE);
         break;
     case SPE_BOOK_OF_THE_DEAD:
-        if (!mon->iswiz || flags.no_of_wizards != 1 || mon == &youmonst) {
+        if (!mon->iswiz || flags.no_of_wizards != 1 || flags.double_troubled ||
+            mon == &youmonst) {
             impossible("Invalid user of double trouble?");
             break;
         }
@@ -1953,8 +1966,9 @@ spelleffects(boolean atme, struct musable *m)
 
 /* Choose location where spell takes effect.
    Fireball/CoC and summon nasty have different conditions. */
-static int
-throwspell(boolean nasty, schar *dx, schar *dy, const struct musable *m)
+int
+throwspell(boolean testing, boolean nasty, schar *dx, schar *dy,
+           const struct musable *m)
 {
     struct monst *mon = m->mon;
     coord cc;
@@ -1962,10 +1976,12 @@ throwspell(boolean nasty, schar *dx, schar *dy, const struct musable *m)
     /* Don't bother checking mon!=you for plines here, the mere trigger shouldn't happen,
        and if it does, the caller should call impossible() */
     if (!nasty && m_underwater(mon)) {
-        pline(msgc_cancelled, "You're joking! In this weather?");
+        if (!testing)
+            pline(msgc_cancelled, "You're joking! In this weather?");
         return 0;
     } else if (!nasty && Is_waterlevel(m_mz(mon))) {
-        pline(msgc_cancelled, "You had better wait for the sun to come out.");
+        if (!testing)
+            pline(msgc_cancelled, "You had better wait for the sun to come out.");
         return 0;
     }
 
@@ -1976,10 +1992,15 @@ throwspell(boolean nasty, schar *dx, schar *dy, const struct musable *m)
             pline(msgc_uiprompt, "Where do you want to cast the spell?");
     }
 
-    cc.x = m_mx(mon);
-    cc.y = m_my(mon);
-    if (mgetargpos(m, &cc, FALSE, "the desired position") == NHCR_CLIENT_CANCEL)
-        return 0;       /* user pressed ESC */
+    if (testing) {
+        cc.x = *dx;
+        cc.y = *dy;
+    } else {
+        cc.x = m_mx(mon);
+        cc.y = m_my(mon);
+        if (mgetargpos(m, &cc, FALSE, "the desired position") == NHCR_CLIENT_CANCEL)
+            return 0;       /* user pressed ESC */
+    }
 
     /* Figure out what condition to mark the target square as
        allowed */
@@ -1993,9 +2014,13 @@ throwspell(boolean nasty, schar *dx, schar *dy, const struct musable *m)
 
     /* The number of moves from hero to where the spell drops. */
     if (distmin(m_mx(mon), m_my(mon), cc.x, cc.y) > 10) {
-        pline(msgc_cancelled, "The spell dissipates over the distance!");
+        if (!testing)
+            pline(msgc_cancelled, "The spell dissipates over the distance!");
         return 0;
     } else if (mon == &youmonst && Engulfed) {
+        if (testing)
+            return 0; /* valid, but a bad idea... */
+
         pline(msgc_badidea, "The spell is cut short!");
         exercise(A_WIS, FALSE); /* What were you THINKING! */
         *dx = 0;
@@ -2004,13 +2029,15 @@ throwspell(boolean nasty, schar *dx, schar *dy, const struct musable *m)
     } else if (nasty && (cc.x != m_mx(mon) || cc.y != m_my(mon)) &&
                (!um_at(level, cc.x, cc.y) ||
                 !mcanspotmon(mon, um_at(level, cc.x, cc.y)))) {
-        pline(msgc_cancelled,
-              "You fail to sense a monster there!");
+        if (!testing)
+            pline(msgc_cancelled,
+                  "You fail to sense a monster there!");
         return 0;
     } else if (!clearpath ||
                IS_STWALL(level->locations[cc.x][cc.y].typ)) {
-        pline(msgc_cancelled,
-              "Your mind fails to lock onto that location!");
+        if (!testing)
+            pline(msgc_cancelled,
+                  "Your mind fails to lock onto that location!");
         return 0;
     } else {
         *dx = cc.x;
@@ -2040,7 +2067,7 @@ dovspell(const struct nh_cmd_arg *arg)
 
     (void) arg;
 
-    while (dospellmenu("Your magical abilities",
+    while (dospellmenu(&youmonst, "Your magical abilities",
                        SPELLMENU_VIEW, &splnum)) {
         if (spellkey(splnum) && yn("Remove the key alias for the spell?") == 'y') {
             spl_book[splnum].sp_key = 0;
@@ -2049,7 +2076,7 @@ dovspell(const struct nh_cmd_arg *arg)
 
         qbuf = msgprintf("Reordering magic: adjust '%c' to",
                          spelllet_from_no(splnum));
-        if (!dospellmenu(qbuf, splnum, &othnum))
+        if (!dospellmenu(&youmonst, qbuf, splnum, &othnum))
             break;
 
         spl_tmp = spl_book[splnum];
@@ -2063,18 +2090,28 @@ void
 quiver_spell(void)
 {
     int splnum;
-    if (!dospellmenu("Choose which spell to ready", SPELLMENU_QUIVER, &splnum))
+    if (!dospellmenu(&youmonst, "Choose which spell to ready",
+                     SPELLMENU_QUIVER, &splnum))
         return;
 
     u.spellquiver = spellid(splnum);
 }
 
+void
+show_monster_spells(const struct monst *mon)
+{
+    const char *buf = msgprintf("%s spells:", s_suffix(noit_Monnam(mon)));
+    dospellmenu(mon, buf, SPELLMENU_VIEW, NULL);
+}
+
 static boolean
-dospellmenu(const char *prompt,
+dospellmenu(const struct monst *mon,
+            const char *prompt,
             int splaction,  /* SPELLMENU_CAST, SPELLMENU_VIEW, SPELLMENU_QUIVER or
                                spl_book[] index */
             int *spell_no)
 {
+    boolean you = (mon == &youmonst);
     int i, n, how, count = 0;
     struct nh_menuitem items[MAXSPELL + 1];
     const int *selected;
@@ -2090,27 +2127,60 @@ dospellmenu(const char *prompt,
     set_menuitem(&items[count++], 0, MI_HEADING,
                  "Name\tLevel\tCategory\tFail\tMemory", 0, FALSE);
     for (i = 0; i < MAXSPELL; i++) {
-        if (spellid(i) == NO_SPELL)
-            continue;
-        const char *percent = "--";
-        if (SPELL_IS_FROM_SPELLBOOK(i) &&
-            spellknow(i) != PERMA)
-            percent = msgprintf("%-d%%", (spellknow(i) * 100 + (KEEN - 1)) / KEEN);
+        int otyp = 0;
+        const char *buf;
+        if (you) {
+            if (spellid(i) == NO_SPELL)
+                continue;
+            const char *percent = "--";
+            if (SPELL_IS_FROM_SPELLBOOK(i) &&
+                spellknow(i) != PERMA)
+                percent = msgprintf("%-d%%", (spellknow(i) * 100 + (KEEN - 1)) / KEEN);
 
-        const char *buf = SPELL_IS_FROM_SPELLBOOK(i) ?
-            msgprintf("%s\t%-d%s%s%s%s\t%s\t%-d%%\t%s", spellname(i), spellev(i),
-                      spellknow(i) ? " " : "*",
-                      !spell_maintained(&youmonst, spellid(i)) ?
-                      " " : "!",
-                      !spellkey(i) ? " " : "#:",
-                      !spellkey(i) ? "" : friendly_key("%s", spellkey(i)),
-                      spelltypemnemonic(spell_skilltype(spellid(i))),
-                      100 - percent_success(&youmonst, spellid(i)), percent) :
-            msgprintf("%s\t--\t%s\t?\t--", spellname(i),
-                      (spellid(i) == SPID_PRAY || spellid(i) == SPID_TURN) ?
-                      "divine" : "ability");
+            buf = SPELL_IS_FROM_SPELLBOOK(i) ?
+                msgprintf("%s\t%-d%s%s%s%s\t%s\t%-d%%\t%s", spellname(i), spellev(i),
+                          spellknow(i) ? " " : "*",
+                          !spell_maintained(mon, spellid(i)) ?
+                          " " : "!",
+                          !spellkey(i) ? " " : "#:",
+                          !spellkey(i) ? "" : friendly_key("%s", spellkey(i)),
+                          spelltypemnemonic(spell_skilltype(spellid(i))),
+                          100 - percent_success(&youmonst, spellid(i)), percent) :
+                msgprintf("%s\t--\t%s\t?\t--", spellname(i),
+                          (spellid(i) == SPID_PRAY || spellid(i) == SPID_TURN) ?
+                          "divine" : "ability");
+        } else {
+            /* Book of the Dead ('b') is used as sentinel for WoY double trouble */
+            if (i == 1) {
+                if (!mon->iswiz)
+                    continue;
+                buf = msgprintf("double trouble\t%-d \tclerical\t%-d%%\t%-d%%", 7, 0,
+                                100);
+                set_menuitem(&items[count++], i + 1, MI_NORMAL, buf,
+                             'b', FALSE);
+                continue;
+            }
+            /* Iterate like this to preserve sane letter ordering */
+            for (otyp = SPE_DIG; otyp <= SPE_BOOK_OF_THE_DEAD; otyp++)
+                if (objects[otyp].oc_defletter == spelllet_from_no(i))
+                    break;
+            if (otyp > SPE_BOOK_OF_THE_DEAD)
+                continue;
+            if (!mon_castable(mon, otyp, TRUE))
+                continue;
+            buf = msgprintf("%s\t%-d%s%s%s%s\t%s\t%-d%%\t%-d%%",
+                            OBJ_NAME(objects[otyp]),
+                            objects[otyp].oc_level, " ",
+                            !spell_maintained(mon, spellid(i)) ?
+                            " " : "!", " ", "",
+                            spelltypemnemonic(spell_skilltype(otyp)),
+                            100 - percent_success(mon, otyp),
+                            100);
+        }
         set_menuitem(&items[count++], i + 1, MI_NORMAL, buf,
-                     spelllet_from_no(i), FALSE);
+                     you ? spelllet_from_no(i) : objects[otyp].oc_defletter, FALSE);
+        if (!you && otyp == SPE_BOOK_OF_THE_DEAD)
+            break;
     }
 
     how = PICK_ONE;
@@ -2119,6 +2189,8 @@ dospellmenu(const char *prompt,
 
     n = display_menu(&(struct nh_menulist){.items = items, .icount = count},
                      prompt, how, PLHINT_ANYWHERE, &selected);
+    if (!you)
+        return FALSE;
 
     if (n > 0) {
         *spell_no = selected[0] - 1;
@@ -2146,7 +2218,7 @@ dump_spells(void)
 {
     /* note: the actual dumping is done in dump_display_menu(), we just need to
        get the data there. */
-    dospellmenu("Spells and supernatural/magical abilities:",
+    dospellmenu(&youmonst, "Spells and supernatural/magical abilities:",
                 SPELLMENU_VIEW, NULL);
 }
 

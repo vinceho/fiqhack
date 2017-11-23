@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-20 */
 /* Copyright (c) Fredrik Ljungdahl, 2017. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -19,6 +19,13 @@ find_objects(struct level *lev, struct obj *chain, int *found,
 {
     struct obj *obj, *objfound, *upper;
     const char *dname;
+    boolean match;
+    int oclass = ALL_CLASSES;
+    if (strlen(str) == 1)
+        oclass = def_char_to_objclass(*str);
+    if (oclass == MAXOCLASSES)
+        oclass = ALL_CLASSES;
+
     for (obj = chain; obj; obj = obj->nobj) {
         dname = distant_name(obj, doname);
         if (obj->where == OBJ_CONTAINED) {
@@ -34,7 +41,10 @@ find_objects(struct level *lev, struct obj *chain, int *found,
                               distant_name(upper, doname));
         }
 
-        if (!strstri(dname, str) || obj->memory == OM_MEMORY_LOST) {
+        match = FALSE;
+        if (obj->memory == OM_MEMORY_LOST ||
+            ((oclass == ALL_CLASSES && !strstri(dname, str)) ||
+             (oclass != ALL_CLASSES && obj->oclass != oclass))) {
             if (Has_contents(obj)) {
                 objfound = find_objects(lev, obj->cobj, found,
                                         did_header, str, menu,
@@ -139,7 +149,7 @@ int
 dofindobj(const struct nh_cmd_arg *arg)
 {
     const char *buf;
-    buf = getlin("Search for what objects?", FALSE);
+    buf = getlin("Search for what objects (or enter a glyph)?", FALSE);
     if (!*buf || *buf == '\033')
         return 0;
 
@@ -169,7 +179,9 @@ dofindobj(const struct nh_cmd_arg *arg)
         }
 
         /* Display target level */
+        struct level *old_level = level;
         if (lev != level) {
+            level = lev;
             int x, y;
             for (x = 0; x < COLNO; x++)
                 for (y = 0; y < ROWNO; y++)
@@ -180,10 +192,12 @@ dofindobj(const struct nh_cmd_arg *arg)
             notify_levelchange(&lev->z);
             flush_screen_nopos();
             look_at_map(upper->ox, upper->oy);
+            level = old_level;
         }
 
         /* Display object position */
         cls();
+        level = lev;
         dbuf_set_memory(lev, upper->ox, upper->oy);
         const char *dname = The(distant_name(obj, cxname));
         const char *cdname = distant_name(upper, doname);
@@ -192,6 +206,7 @@ dofindobj(const struct nh_cmd_arg *arg)
               msgcat_many(", inside ", cdname, NULL));
         flush_screen_nopos();
         look_at_map(upper->ox, upper->oy);
+        level = old_level;
         notify_levelchange(NULL);
         doredraw();
     }
@@ -242,7 +257,7 @@ update_obj_memories(struct level *lev)
     /* First, mark memories as lost, or free them. */
     struct obj *obj, *memobj, *next;
     for (memobj = youmonst.meminvent; memobj; memobj = next) {
-        next = memobj->nexthere;
+        next = memobj->nobj;
         obj = memobj->mem_obj;
         if (!obj) {
             /* Apparently the object disappeared, deallocate it. */
@@ -255,7 +270,7 @@ update_obj_memories(struct level *lev)
 
     /* Now set up up to date memories of objects inside. */
     for (obj = youmonst.minvent; obj; obj = obj->nobj)
-        update_obj_memory(obj);
+        update_obj_memory(obj, NULL);
 }
 
 /* Refreshes object memories at location. Assumes the player can know
@@ -266,6 +281,13 @@ update_obj_memories_at(struct level *lev, int x, int y)
     /* Screen redraws end up calling this. We don't want to
        change the gamestate in this case, so check for it. */
     if (program_state.in_zero_time_command)
+        return;
+
+    /* Maybe we can't see underwater/lava... In that case, leave memories
+       untouched (don't lose memories either) so that the hero can still
+       remember them if object detection or similar was used. */
+    if (is_lava(lev, x, y) ||
+        (is_pool(lev, x, y) && !Underwater))
         return;
 
     struct obj *obj, *memobj, *next;
@@ -282,7 +304,16 @@ update_obj_memories_at(struct level *lev, int x, int y)
     }
 
     for (obj = lev->objects[x][y]; obj; obj = obj->nexthere)
-        update_obj_memory(obj);
+        update_obj_memory(obj, NULL);
+
+    /* If there is a mimic on the tile, create a fake object memory. */
+    struct monst *mon = m_at(lev, x, y);
+    if (!mon || mon->m_ap_type != M_AP_OBJECT)
+        return;
+    if (m_helpless(mon, 1 << hr_mimicking) &&
+        (lev != level || !Protection_from_shape_changers) &&
+        (msensem(&youmonst, mon) & MSENSE_ITEMMIMIC))
+        update_obj_memory(NULL, mon);
 }
 
 /* Updates container memory */
@@ -294,8 +325,11 @@ update_container_memory(struct obj *obj)
         return;
     }
 
+    /* Mark container as investigated */
+    obj->cknown = TRUE;
+
     /* Update container itself first. */
-    update_obj_memory(obj);
+    update_obj_memory(obj, NULL);
 
     struct obj *memobj = obj->mem_obj;
     struct obj *next;
@@ -311,13 +345,62 @@ update_container_memory(struct obj *obj)
     }
 
     for (obj = obj->cobj; obj; obj = obj->nobj)
-        update_obj_memory(obj);
+        update_obj_memory(obj, NULL);
 }
 
-/* Creates or updates an object memory for given object */
-void
-update_obj_memory(struct obj *obj)
+/* Returns amount of remembered objects or -1 if not remembered/not a container */
+int
+remembered_contained(const struct obj *obj)
 {
+    if (!obj)
+        panic("remembered_contained: obj is NULL");
+
+    if (!obj->cknown)
+        return -1;
+
+    /* If we're creating bones, memories has already
+       been freed before cknown has. */
+    if (program_state.gameover)
+        return -1;
+
+    const struct obj *memobj = obj;
+    if (memobj->memory == OM_NO_MEMORY)
+        memobj = memobj->mem_obj;
+
+    if (!memobj)
+        panic("remembered_contained: obj->mem_obj is NULL");
+
+    if (!Is_container(memobj) ||
+        (memobj->otyp == BAG_OF_TRICKS && memobj->dknown &&
+         objects[BAG_OF_TRICKS].oc_name_known))
+        return -1;
+
+    int ret = 0;
+    for (obj = memobj->cobj; obj; obj = obj->nobj)
+        ret++;
+    return ret;
+}
+
+/* Creates or updates an object memory for given object, or for a mimic. */
+void
+update_obj_memory(struct obj *obj, struct monst *mon)
+{
+    if (!obj) {
+        if (!mon) {
+            impossible("update_obj_memory: both obj and mon is NULL?");
+            return;
+        }
+
+        /* Create a pseudo-object based on a mimic's appearance. */
+        obj = mktemp_sobj(m_dlevel(mon), mon->mappearance);
+        obj->ox = m_mx(mon);
+        obj->oy = m_my(mon);
+    } else if (obj && mon) {
+        /* which one is it, object or monster? */
+        impossible("update_obj_memory: both obj and mon is non-NULL?");
+        return;
+    }
+
     struct obj *memobj = obj->mem_obj;
     if (!memobj) {
         /* Create a new memory */
@@ -340,7 +423,7 @@ update_obj_memory(struct obj *obj)
     struct obj *cobj = memobj->cobj;
 
     extract_obj_memory(memobj);
-    turnstate.floating_objects = memobj->nobj;
+    extract_nobj(memobj, &turnstate.floating_objects, NULL, OBJ_FREE);
     ox_free(memobj);
 
     *memobj = *obj;
@@ -359,7 +442,6 @@ update_obj_memory(struct obj *obj)
     memobj->timed = 0;
     memobj->lamplit = 0;
     memobj->owornmask = 0;
-    memobj->nobj = NULL;
     memobj->nexthere = NULL;
 
     /* just in case... */
@@ -376,17 +458,21 @@ update_obj_memory(struct obj *obj)
         memobj->cobj = NULL;
     }
 
-    /* Add to memory chain */
-    switch (obj->where) {
-    case OBJ_FREE:
-        panic("update_obj_memory: updating memory for a floating object?");
-        /* NOTREACHED */ break;
-    case OBJ_FLOOR:
+    if (obj->where == OBJ_FLOOR || mon) {
         extract_nobj(memobj, &turnstate.floating_objects,
                      &memobj->olev->memobjlist, OBJ_FLOOR);
         memobj->nexthere = lev->memobjects[memobj->ox][memobj->oy];
         lev->memobjects[memobj->ox][memobj->oy] = memobj;
-        break;
+
+        if (mon)
+            obfree(obj, NULL); /* get rid of the pseudo-object */
+        return;
+    }
+
+    switch (obj->where) {
+    case OBJ_FREE:
+        panic("update_obj_memory: updating memory for a floating object?");
+        /* NOTREACHED */ break;
     case OBJ_CONTAINED:
         obj = obj->ocontainer->mem_obj;
         /* We must have a memory for the container, or something is wrong */

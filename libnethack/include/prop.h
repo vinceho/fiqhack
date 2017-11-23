@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-10 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
 /* Copyright (c) 1989 Mike Threepoint                             */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -87,8 +87,10 @@ enum youprop {
     SLOW                     = 69,
     ZOMBIE                   = 70,
     WATERPROOF               = 71,
-/*  DEATH_RES                = 72, TODO */
-    LAST_PROP                = WATERPROOF,
+    STUN_RES                 = 72,
+    DEATH_RES                = 73,
+    /* Remember to change savemap mapping in save.c for ever_trinsic if applicable */
+    LAST_PROP                = DEATH_RES,
     INVALID_PROP             = -1,
 };
 
@@ -309,12 +311,13 @@ enum tracked_location {
 # define FROMROLE     ((unsigned)W_MASK(os_role))
 # define FROMRACE     ((unsigned)W_MASK(os_race))
 # define FROMPOLY     ((unsigned)W_MASK(os_polyform))
+# define FROMFORM     (FROMROLE|FROMRACE|FROMPOLY)
 # define FROMOUTSIDE  ((unsigned)W_MASK(os_outside))
 # define TIMEOUT      ((unsigned)W_MASK(os_timeout))
-# define INTRINSIC    (FROMOUTSIDE|FROMRACE|FROMROLE|FROMPOLY)
+/* timeout is regarded as an extrinsic */
+# define INTRINSIC    (FROMOUTSIDE|FROMFORM)
 # define EXTRINSIC    ~INTRINSIC
 /* Control flags */
-# define I_SPECIAL    ((unsigned)W_MASK(os_special))
 # define ANY_PROPERTY ((unsigned)-1)
 
 #endif /* PROP_H */

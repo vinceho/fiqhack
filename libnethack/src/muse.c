@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-15 */
 /* Copyright (C) 1990 by Ken Arromdee                              */
 /* NetHack may be freely redistributed.  See license for details.  */
 
@@ -32,7 +32,7 @@ static void mzapmsg(struct monst *, struct obj *, boolean);
 static void mreadmsg(struct monst *, struct obj *);
 static void mquaffmsg(struct monst *, struct obj *);
 static void mon_break_wand(struct monst *, struct obj *);
-static int find_item_score(const struct monst *, struct obj *, coord *);
+static int find_item_score(const struct monst *, struct obj *, coord *, struct musable *);
 static int find_item_single(struct obj *, boolean, struct musable *, boolean, boolean);
 static boolean mon_allowed(int);
 
@@ -479,7 +479,7 @@ mon_makewish(struct monst *mon)
         else {
             int wish_spells[] = {
                 SPE_SUMMON_NASTY, SPE_TURN_UNDEAD, SPE_EXTRA_HEALING,
-                SPE_FINGER_OF_DEATH, SPE_MAGIC_MISSILE, SPE_HASTE_SELF,
+                SPE_FINGER_OF_DEATH, SPE_MAGIC_MISSILE, SPE_SPEED_MONSTER,
                 SPE_REMOVE_CURSE, SPE_CHARGING, SPE_IDENTIFY,
                 SPE_PROTECTION
             };
@@ -699,6 +699,7 @@ mon_choose_dirtarget(const struct monst *mon, struct obj *obj, coord *cc)
                 if (obj->otyp == SPE_HEALING ||
                     obj->otyp == SPE_EXTRA_HEALING ||
                     obj->otyp == SPE_STONE_TO_FLESH ||
+                    obj->otyp == SPE_SPEED_MONSTER ||
                     obj->otyp == WAN_SPEED_MONSTER ||
                     obj->otyp == WAN_MAKE_INVISIBLE)
                     helpful = TRUE;
@@ -931,8 +932,10 @@ mon_choose_dirtarget(const struct monst *mon, struct obj *obj, coord *cc)
    if it's worth using a scroll/spell/etc or not).
 */
 int
-mon_choose_spectarget(const struct monst *mon, struct obj *obj, coord *cc)
+mon_choose_spectarget(struct musable *m, struct obj *obj, coord *cc)
 {
+    struct monst *mon = m->mon;
+
     boolean stink = obj->otyp == SCR_STINKING_CLOUD ? TRUE : FALSE;
     int globrange = 10;
     if (stink)
@@ -944,6 +947,7 @@ mon_choose_spectarget(const struct monst *mon, struct obj *obj, coord *cc)
     int score = 0;
     int score_best = 0;
     int x, y, xx, yy;
+    schar dx, dy;
     int x_best = 0;
     int y_best = 0;
     struct monst *mtmp;
@@ -956,6 +960,13 @@ mon_choose_spectarget(const struct monst *mon, struct obj *obj, coord *cc)
                 continue;
             if (IS_STWALL(level->locations[x][y].typ))
                 continue;
+            if (obj->otyp == SPE_FIREBALL ||
+                obj->otyp == SPE_CONE_OF_COLD) {
+                dx = x;
+                dy = y;
+                if (!throwspell(TRUE, FALSE, &dx, &dy, m))
+                    continue;
+            }
 
             mtmp = um_at(level, x, y);
             if (!m_cansee(mon, x, y) ||
@@ -1016,8 +1027,35 @@ mon_choose_spectarget(const struct monst *mon, struct obj *obj, coord *cc)
     return score_best;
 }
 
+/* Returns 20 if we have a valid target, otherwise -20 on ourself. */
 static int
-find_item_score(const struct monst *mon, struct obj *obj, coord *tc)
+summon_nasty_score(struct musable *m, coord *tc)
+{
+    struct monst *mon = m->mon;
+    struct monst *target = NULL;
+    schar x, y;
+    tc->x = mon->mx;
+    tc->y = mon->my;
+    for (target = mon->dlevel->monlist; target; target = monnext(target)) {
+        if (DEADMONSTER(target))
+            continue;
+
+        x = m_mx(target);
+        y = m_my(target);
+        if (mm_aggression(mon, target) && msensem(mon, target) &&
+            throwspell(TRUE, TRUE, &x, &y, m)) {
+            tc->x = x;
+            tc->y = y;
+            return 20;
+        }
+    }
+
+    return -20;
+}
+
+static int
+find_item_score(const struct monst *mon, struct obj *obj, coord *tc,
+                struct musable *m)
 {
     int otyp = obj->otyp;
     int score = 0;
@@ -1060,7 +1098,9 @@ find_item_score(const struct monst *mon, struct obj *obj, coord *tc)
                ((otyp == SPE_FIREBALL ||
                  otyp == SPE_CONE_OF_COLD) &&
                 mprof(mon, MP_SATTK) >= P_SKILLED))
-        score = mon_choose_spectarget(mon, obj, tc);
+        score = mon_choose_spectarget(m, obj, tc);
+    else if (otyp == SPE_SUMMON_NASTY)
+        score = summon_nasty_score(m, tc);
     else
         score = mon_choose_dirtarget(mon, obj, tc);
     return score;
@@ -1116,6 +1156,9 @@ boolean
 find_item(struct monst *mon, struct musable *m)
 {
     init_musable(mon, m);
+    if (is_animal(mon->data) || mindless(mon->data))
+        return FALSE;
+
     struct obj *obj = NULL;
     struct trap *t;
     int x = mon->mx, y = mon->my;
@@ -1134,10 +1177,10 @@ find_item(struct monst *mon, struct musable *m)
     int hostrange = 0;
     struct monst *mtmp;
     struct monst *mclose = NULL;
-    if (msensem(mon, &youmonst) && mm_aggression(mon, &youmonst)) {
+    if (mm_aggression(mon, &youmonst) && msensem(mon, &youmonst)) {
         hostsense++;
-        if ((msensem(mon, &youmonst) & MSENSE_ANYVISION) ||
-            m_cansee(mon, u.ux, u.uy)) {
+        if (m_cansee(mon, u.ux, u.uy) ||
+            (msensem(mon, &youmonst) & MSENSE_ANYVISION)) {
             hostvis++;
             hostrange = dist2(mon->mx, mon->my, u.ux, u.uy);
             mclose = &youmonst;
@@ -1146,12 +1189,12 @@ find_item(struct monst *mon, struct musable *m)
 
     for (mtmp = mon->dlevel->monlist; mtmp; mtmp = mtmp->nmon) {
         if (DEADMONSTER(mtmp) ||
-            !msensem(mon, mtmp) ||
-            (!mm_aggression(mon, mtmp)))
+            !mm_aggression(mon, mtmp) ||
+            !msensem(mon, mtmp))
             continue;
         hostsense++;
-        if ((msensem(mon, mtmp) & MSENSE_ANYVISION) ||
-            m_cansee(mon, mtmp->mx, mtmp->my)) {
+        if (m_cansee(mon, mtmp->mx, mtmp->my) ||
+            (msensem(mon, mtmp) & MSENSE_ANYVISION)) {
             hostvis++;
             if (!hostrange ||
                 hostrange > dist2(mon->mx, mon->my, mtmp->mx, mtmp->my)) {
@@ -1164,9 +1207,6 @@ find_item(struct monst *mon, struct musable *m)
     /* range of 100 is the cap on fireball, cone of cold and summon nasty */
     if (mclose && hostrange > 100)
         mclose = NULL; /* no close targets */
-
-    if (is_animal(mon->data) || mindless(mon->data))
-        return FALSE;
 
     m->obj = NULL;
     m->spell = 0;
@@ -1446,16 +1486,20 @@ find_item(struct monst *mon, struct musable *m)
         return TRUE;
 
     /* Clone ourselves */
-    if (flags.no_of_wizards == 1 &&
+    if (flags.no_of_wizards == 1 && !flags.double_troubled &&
         mon_castable(mon, SPE_BOOK_OF_THE_DEAD, FALSE)) {
         m->use = MUSE_SPE;
         m->spell = SPE_BOOK_OF_THE_DEAD; /* sentinel for double trouble */
         return TRUE;
     }
 
-    if (!very_fast(mon) && mon_castable(mon, SPE_HASTE_SELF, FALSE)) {
+    if (!very_fast(mon) && !slow(mon) &&
+        mon_castable(mon, SPE_SPEED_MONSTER, FALSE)) {
         m->use = MUSE_SPE;
-        m->spell = SPE_HASTE_SELF;
+        m->spell = SPE_SPEED_MONSTER;
+        m->x = 0;
+        m->y = 0;
+        m->z = 0;
         return TRUE;
     }
 
@@ -1497,34 +1541,20 @@ find_item(struct monst *mon, struct musable *m)
 
         usable = find_item_single(obj, TRUE, &m2, mclose ? TRUE : FALSE, FALSE);
         if (usable && mon_allowed(spell)) {
-            if (usable == 1) {
-                /* TODO: move summon nasty handling elsewhere */
-                if (spell == SPE_SUMMON_NASTY) {
-                    if (!mclose)
-                        impossible("Monster casting summon nasties when there is no target");
-                    if (!mcanspotmon(mon, mclose))
-                        mclose = NULL;
-                }
-                if ((mclose || spell != SPE_SUMMON_NASTY) && !rn2(randcount)) {
-                    randcount++;
-                    m->spell = spell;
-                    m->x = m2.x;
-                    m->y = m2.y;
-                    m->z = m2.z;
-                    if (spell == SPE_SUMMON_NASTY) {
-                        m->x = m_mx(mclose);
-                        m->y = m_my(mclose);
-                        m->z = 0;
-                    }
-                    m->use = MUSE_SPE;
-                }
-            } else {
-                score = find_item_score(mon, obj, &tc);
+            if (usable != 1) {
+                score = find_item_score(mon, obj, &tc, m);
                 if (score > score_best) {
                     tc_best = tc;
                     spell_best = spell;
                     score_best = score;
                 }
+            } else if (!rn2(randcount)) {
+                randcount++;
+                m->spell = spell;
+                m->x = m2.x;
+                m->y = m2.y;
+                m->z = m2.z;
+                m->use = MUSE_SPE;
             }
         }
         obfree(obj, NULL);
@@ -1637,8 +1667,9 @@ find_item_obj(struct obj *chain, struct musable *m,
                    another bag */
                 if (chain == mon->minvent) {
                     int vanish = 0;
-                    struct obj *otmp;
-                    for (otmp = obj->cobj; otmp; otmp = otmp->nobj) {
+                    struct obj *otmp, *nextotmp;
+                    for (otmp = obj->cobj; otmp; otmp = nextotmp) {
+                        nextotmp = otmp->nobj;
                         if (rn2(13))
                             continue;
                         /* something vanished, monster knows BUC now... */
@@ -1685,34 +1716,32 @@ find_item_obj(struct obj *chain, struct musable *m,
             continue;
         usable = find_item_single(obj, FALSE, &m2, close, !!specobj);
         if (usable && mon_allowed(obj->otyp)) {
-            if (usable == 1) {
-                if (!rn2(randcount)) {
-                    randcount++;
-                    m->obj = obj;
-                    m->x = m2.x;
-                    m->y = m2.y;
-                    m->z = m2.z;
-                    m->use = (obj->oclass == WAND_CLASS   ? MUSE_WAN  :
-                              obj->oclass == SCROLL_CLASS ? MUSE_SCR  :
-                              obj->oclass == POTION_CLASS ? MUSE_POT  :
-                              obj->oclass == SPBOOK_CLASS ? MUSE_BOOK :
-                              obj->oclass == FOOD_CLASS   ? MUSE_EAT  :
-                              obj->otyp == SKELETON_KEY   ? MUSE_KEY  :
-                              obj->otyp == CREDIT_CARD    ? MUSE_KEY  :
-                              obj->otyp == LOCK_PICK      ? MUSE_KEY  :
-                              obj->otyp == BAG_OF_TRICKS  ? MUSE_BAG_OF_TRICKS :
-                              0);
-                    if (m->use == 0)
-                        impossible("AI error: Unhandled nondirectional musable for obj: %s",
-                                   killer_xname(obj));
-                }
-            } else {
-                score = find_item_score(mon, obj, &tc);
+            if (usable != 1) {
+                score = find_item_score(mon, obj, &tc, m);
                 if (score > score_best) {
                     tc_best = tc;
                     obj_best = obj;
                     score_best = score;
                 }
+            } else if (!rn2(randcount)) {
+                randcount++;
+                m->obj = obj;
+                m->x = m2.x;
+                m->y = m2.y;
+                m->z = m2.z;
+                m->use = (obj->oclass == WAND_CLASS   ? MUSE_WAN  :
+                          obj->oclass == SCROLL_CLASS ? MUSE_SCR  :
+                          obj->oclass == POTION_CLASS ? MUSE_POT  :
+                          obj->oclass == SPBOOK_CLASS ? MUSE_BOOK :
+                          obj->oclass == FOOD_CLASS   ? MUSE_EAT  :
+                          obj->otyp == SKELETON_KEY   ? MUSE_KEY  :
+                          obj->otyp == CREDIT_CARD    ? MUSE_KEY  :
+                          obj->otyp == LOCK_PICK      ? MUSE_KEY  :
+                          obj->otyp == BAG_OF_TRICKS  ? MUSE_BAG_OF_TRICKS :
+                          0);
+                if (m->use == 0)
+                    impossible("AI error: Unhandled nondirectional musable for obj: %s",
+                               killer_xname(obj));
             }
         }
     }
@@ -1969,6 +1998,7 @@ find_item_single(struct obj *obj, boolean spell, struct musable *m, boolean clos
              otyp == SPE_CANCELLATION ||
              otyp == SCR_TAMING ||
              otyp == SPE_CHARM_MONSTER ||
+             otyp == SPE_SUMMON_NASTY ||
              otyp == POT_BLINDNESS ||
              otyp == POT_CONFUSION ||
              otyp == POT_ACID) &&
@@ -1980,6 +2010,7 @@ find_item_single(struct obj *obj, boolean spell, struct musable *m, boolean clos
          otyp == WAN_POLYMORPH ||
          otyp == SPE_POLYMORPH ||
          otyp == WAN_SPEED_MONSTER ||
+         otyp == SPE_SPEED_MONSTER ||
          otyp == SPE_HEALING ||
          otyp == SPE_EXTRA_HEALING ||
          otyp == SPE_STONE_TO_FLESH ||
@@ -2023,8 +2054,7 @@ find_item_single(struct obj *obj, boolean spell, struct musable *m, boolean clos
         monstr[monsndx(mon->data)] < 6)
         return 1;
 
-    if ((otyp == SPE_HASTE_SELF ||
-         otyp == POT_SPEED) && !very_fast(mon))
+    if (otyp == POT_SPEED && !very_fast(mon))
         return 1;
 
     if (otyp == BULLWHIP && !rn2(2) && close &&
@@ -2068,10 +2098,10 @@ find_item_single(struct obj *obj, boolean spell, struct musable *m, boolean clos
            otyp == BAG_OF_TRICKS ||
            (otyp == SCR_GENOCIDE && cursed)) &&
           !mon->mpeaceful) || /* create monster makes no sense for peacefuls */
-         otyp == SPE_CREATE_FAMILIAR ||
-         otyp == SPE_SUMMON_NASTY) &&
+         otyp == SPE_CREATE_FAMILIAR) &&
         close)
         return 1;
+
     return 0;
 }
 
@@ -2235,11 +2265,17 @@ use_item(struct musable *m)
             case 2:
                 prop = STUNNED;
             }
-            if (!has_property(mon, prop)) {
+            if (!has_property(mon, prop) &&
+                (prop != STUNNED || !resists_stun(mon))) {
                 /* well, they know it's cursed now... */
                 obj->mbknown = 1;
             }
-            set_property(mon, prop, rnd(100), FALSE);
+            if (prop == STUNNED && !resists_stun(mon)) {
+                if (vismon)
+                    pline(msgc_monneutral,
+                          "Nothing seems to happen.");
+            } else
+                set_property(mon, prop, rnd(100), FALSE);
         } else {
             set_property(mon, BLINDED, -2, FALSE);
             set_property(mon, CONFUSION, -2, FALSE);
@@ -2266,7 +2302,7 @@ use_item(struct musable *m)
         if (oseen)
             makeknown(obj->otyp);
         buzz(-30 - ((obj->otyp == FROST_HORN) ? AD_COLD - 1 : AD_FIRE - 1),
-             rn1(6, 6), mon->mx, mon->my, m->x, m->y, 0);
+             m_mlev(mon), mon->mx, mon->my, m->x, m->y, 0);
         return DEADMONSTER(mon) ? 1 : 2;
     case MUSE_BUGLE:
         if (vismon)
@@ -2510,9 +2546,7 @@ use_item(struct musable *m)
             if (vis)
                 pline(combat_msgc(mon, mtmp, cr_hit),
                       "%s flicks a whip at %s%s!", Monnam(mon),
-                      !mtmp ? "thin air" :
-                      mtmp == &youmonst ? "your" :
-                      s_suffix(mon_nam(mtmp)),
+                      !mtmp ? "thin air" : s_suffix(mon_nam(mtmp)),
                       mtmp ? " displaced image" : "");
             return 1;
         }
@@ -2534,24 +2568,21 @@ use_item(struct musable *m)
         if (vismon)
             pline(combat_msgc(mon, mtmp, cr_hit),
                   "%s flicks a bullwhip towards %s %s!", Monnam(mon),
-                  mtmp == &youmonst ? "your" : s_suffix(mon_nam(mtmp)),
-                  hand);
+                  s_suffix(mon_nam(mtmp)), hand);
         if (otmp->otyp == HEAVY_IRON_BALL) {
             pline(combat_msgc(mon, mtmp, cr_immune),
                   "%s fails to wrap around %s.", The_whip, the_weapon);
             return 1;
         }
         pline(combat_msgc(mon, mtmp, cr_hit),
-              "%s wraps around %s %s %s wielding!", The_whip, the_weapon,
-              mtmp == &youmonst ? "you" : mon_nam(mtmp),
-              mtmp == &youmonst ? "are" : "is");
+              "%s wraps around %s %s wielding!", The_whip, the_weapon,
+              m_verbs(mtmp, "are"));
         if ((mtmp == &youmonst && welded(otmp)) ||
             (otmp->cursed && otmp->otyp != CORPSE)) {
             pline(combat_msgc(mon, mtmp, cr_immune),
                   "%s welded to %s %s%c",
                   !is_plural(obj) ? "It is" : "They are", hand,
-                  mtmp == &youmonst ? "your" : s_suffix(mon_nam(mtmp)),
-                  !obj->bknown ? '!' : '.');
+                  s_suffix(mon_nam(mtmp)), !obj->bknown ? '!' : '.');
             otmp->bknown = 1;
             otmp->mbknown = 1;
             where_to = 0;
@@ -2579,8 +2610,7 @@ use_item(struct musable *m)
             pline(mtmp == &youmonst ? msgc_itemloss :
                   combat_msgc(mon, mtmp, cr_hit),
                   "%s yanks %s from %s %s!", Monnam(mon), the_weapon,
-                  mtmp == &youmonst ? "your" : s_suffix(mon_nam(mon)),
-                  hand);
+                  s_suffix(mon_nam(mon)), hand);
             place_object(otmp, level, mon->mx, mon->my);
             break;
         case 2:    /* onto floor beneath you */
@@ -2687,7 +2717,8 @@ mon_break_wand(struct monst *mtmp, struct obj *otmp) {
         otyp == WAN_LOCKING ||
         otyp == WAN_PROBING ||
         otyp == WAN_ENLIGHTENMENT ||
-        otyp == WAN_SECRET_DOOR_DETECTION) {
+        otyp == WAN_SECRET_DOOR_DETECTION ||
+        otmp->spe <= 0) {
         if (oseen)
             pline(msgc_failcurse, "But nothing else happens...");
         return;
@@ -3078,18 +3109,21 @@ mon_reflects(const struct monst *mon, const struct monst *magr,
             pline(combat_msgc(magr, mon, recursive ?
                               cr_miss : cr_immune),
                   fmt, str, mon_s,
-                  refl(os_arms)     ? "shield" :
-                  refl(os_wep)      ? "weapon" :
-                  refl(os_swapwep)  ? "weapon" :
-                  refl(os_amul)     ? "amulet" :
-                  refl(os_role)     ? "scales" :
-                  refl(os_race)     ? "scales" :
-                  refl(os_polyform) ? "scales" :
-                  refl(os_arm)      ? "armor"  :
-                  refl(os_armg)     ? "gloves" :
-                  refl(os_armf)     ? "boots"  :
-                  refl(os_armh)     ? "helmet" :
-                  refl(os_armu)     ? "shirt"  :
+                  refl(os_arms)     ? "shield"     :
+                  refl(os_wep)      ? "weapon"     :
+                  refl(os_swapwep)  ? "weapon"     :
+                  refl(os_amul)     ? "amulet"     :
+                  refl(os_role)     ? "scales"     :
+                  refl(os_race)     ? "scales"     :
+                  refl(os_polyform) ? "scales"     :
+                  refl(os_arm)      ? "armor"      :
+                  refl(os_armg)     ? "gloves"     :
+                  refl(os_armf)     ? "boots"      :
+                  refl(os_armh)     ? "helmet"     :
+                  refl(os_armu)     ? "shirt"      :
+                  refl(os_ringr)    ? "right ring" :
+                  refl(os_ringl)    ? "left ring"  :
+                  refl(os_outside)  ? "skin"       : /* potions of wonder */
                   "something weird"); /* os_arm after role/etc to suppress
                                          "armor" if uskin() */
         if (slot == os_wep) {

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-15 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-10 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -27,7 +27,7 @@ static const int nasties[] = {
     PM_COUATL, PM_CAPTAIN, PM_WINGED_GARGOYLE, PM_MASTER_MIND_FLAYER,
     PM_FIRE_ELEMENTAL, PM_JABBERWOCK, PM_ARCH_LICH, PM_OGRE_KING,
     PM_OLOG_HAI, PM_IRON_GOLEM, PM_OCHRE_JELLY, PM_GREEN_SLIME,
-    PM_DISENCHANTER
+    PM_DISENCHANTER, PM_FLOATING_EYE
 };
 
 static const unsigned wizapp[] = {
@@ -198,7 +198,7 @@ on_ground(short otyp, xchar x, xchar y, const struct monst *mtmp)
 {
     struct obj *otmp;
 
-    if (otyp) {
+    if (otyp || x == COLNO) {
         for (otmp = level->objlist; otmp; otmp = otmp->nobj)
             if (otyp) {
                 if (otmp->otyp == otyp)
@@ -259,7 +259,7 @@ target_on(int mask, struct monst *mtmp)
                act like that item hasn't spawned. Otherwise randomly generated
                liches will try to beat up the Wizard of Yendor. */
             mtmp2 = m_at(level, otmp->ox, otmp->oy);
-            if (!mtmp2 || !idle(mtmp2)) {
+            if (!mtmp2 || !idle(mtmp2) || mtmp == mtmp2) {
                 mtmp->mstrategy = st_obj;
                 mtmp->sx = otmp->ox;
                 mtmp->sy = otmp->oy;
@@ -609,9 +609,73 @@ tactics(struct monst *mtmp)
     if (idle(mtmp))
         panic("Covetous AI running on an idle monster?");
 
+    struct monst *target;
+    int mclose = ROWNO * COLNO;
+    int x = COLNO;
+    int y = ROWNO;
+
+    if (mtmp->mtame) {
+        /* Harass monsters hostile to the player */
+        for (target = mtmp->dlevel->monlist; target; target = monnext(target)) {
+            if (DEADMONSTER(target))
+                continue;
+
+            if (mm_aggression(mtmp, target) && msensem(mtmp, target)) {
+                if (mclose > dist2(u.ux, u.uy, m_mx(target), m_my(target))) {
+                    mclose = dist2(u.ux, u.uy, m_mx(target), m_my(target));
+                    x = m_mx(target);
+                    y = m_my(target);
+                }
+            }
+        }
+
+        if (isok(x, y) &&
+            (mclose < (BOLT_LIM * BOLT_LIM) ? rn2(4) : !rn2(4))) {
+            mnearto(mtmp, x, y, FALSE);
+            return 0;
+        }
+    }
+
     long strat = mtmp->mstrategy;
+    struct level *lev = mtmp->dlevel;
+    struct obj *obj;
 
     switch (strat) {
+    case st_obj: /* object on floor */
+        /* If we are on the object, pick it up */
+        if ((obj = on_ground(0, mtmp->mx, mtmp->my, mtmp)) != 0) {
+            if (cansee(mtmp->mx, mtmp->my))
+                pline(msgc_monneutral, "%s picks up %s.",
+                      Monnam(mtmp),
+                      (distu(mtmp->mx, mtmp->my) <= 5) ?
+                      doname(obj) : distant_name(obj, doname));
+            obj_extract_self(obj);
+            mpickobj(mtmp, obj, NULL);
+            return 1;
+        }
+
+        /* Otherwise, try to teleport to it and fallback to normal AI */
+        mnearto(mtmp, mtmp->sx, mtmp->sy, FALSE);
+        return 0;
+    case st_mon: /* object in monster inventory */
+        /* If we're tame and target is tame or player, usually run the normal AI */
+        target = mvismon_at(mtmp, mtmp->dlevel, mtmp->sx, mtmp->sy);
+        if (target && mtmp->mtame && (target->mtame || target == &youmonst) && rn2(10))
+            return 0;
+
+        /* If we're already next to our target square, don't teleport */
+        if (monnear(mtmp, mtmp->sx, mtmp->sy)) {
+            /* Attack our target unless we're tame and target is tame/player */
+            if (!target ||
+                (mtmp->mtame && (target->mtame || target == &youmonst)))
+                return 0; /* Fallback to normal AI */
+
+            return mattackq(mtmp, mtmp->sx, mtmp->sy) ? 2 : 1;
+        }
+
+        /* Otherwise, teleport to the target (only do it sometimes if we wont attack) */
+        mnearto(mtmp, mtmp->sx, mtmp->sy, FALSE);
+        return 0;
     case st_escape:   /* hide and recover */
         /* if wounded, hole up on or near the stairs (to block them) */
         /* unless, of course, there are no stairs (e.g. endlevel) */
@@ -624,7 +688,7 @@ tactics(struct monst *mtmp)
         } else if (isok(level->upstair.sx, level->upstair.sy) &&
                    (mtmp->mx != level->upstair.sx ||
                     mtmp->my != level->upstair.sy)) {
-            mnearto(mtmp, level->upstair.sx, level->upstair.sy, TRUE);
+            mnearto(mtmp, level->upstair.sx, level->upstair.sy, FALSE);
         }
         if (distu(mtmp->mx, mtmp->my) > (BOLT_LIM * BOLT_LIM)) {
             /* if you're not around, cast healing spells
@@ -641,56 +705,30 @@ tactics(struct monst *mtmp)
             return 0;
         }
 
-    case st_none:   /* harrass */
-        if (!rn2(!mtmp->mflee ? 5 : 33))
-            mnexto(mtmp);
-        return 0;
+    default:
+        /* Sometimes, try to find pests we can harass */
+        if (!rn2(3)) {
+            rloc(mtmp, TRUE);
 
-    default:   /* kill, maim, pillage! */
-        {
-            xchar tx = mtmp->sx, ty = mtmp->sy;
-            struct obj *otmp;
+            /* Try to figure out where pests are */
+            for (target = mtmp->dlevel->monlist; target; target = monnext(target)) {
+                if (DEADMONSTER(target))
+                    continue;
 
-            if (!st_target(mtmp)) /* simply wants you to close */
-                return 0;
-
-            /* teleport as near to the desired square as possible */
-            mnearto(mtmp, tx, ty, FALSE);
-
-            /* if the player's blocking our target square, use the regular AI
-               to attack them (so that we use items, request bribes, etc.) */
-            if (u.ux == tx && u.uy == ty)
-                return 0;
-
-            if (strat == st_obj) {
-                if (!MON_AT(level, tx, ty) ||
-                    (mtmp->mx == tx && mtmp->my == ty)) {
-                    /* teleport to it and pick it up */
-                    rloc_to(mtmp, tx, ty);      /* clean old pos */
-
-                    if ((otmp = on_ground(0, tx, ty, mtmp)) != 0) {
-                        if (cansee(mtmp->mx, mtmp->my))
-                            pline(msgc_monneutral, "%s picks up %s.",
-                                  Monnam(mtmp),
-                                  (distu(mtmp->mx, mtmp->my) <= 5) ?
-                                  doname(otmp) : distant_name(otmp, doname));
-                        obj_extract_self(otmp);
-                        mpickobj(mtmp, otmp, NULL);
-                        return 1;
-                    } else
-                        return 0;
-                } else {
-                    /* a monster is standing on it - go after it */
-                    return mattackq(mtmp, tx, ty) ? 2 : 1;
+                if (mm_aggression(mtmp, target) && msensem(mtmp, target)) {
+                    x = m_mx(target);
+                    y = m_my(target);
+                    break;
                 }
-            } else if (mtmp->mx != tx || mtmp->my != ty) {
-                /* something is blocking our square; attack it */
-                return mattackq(mtmp, tx, ty) ? 2 : 1;
-            } else {
-                /* fall through to the normal AI */
-                return 0;
             }
+
+            if (isok(x, y))
+                mnearto(mtmp, x, y, FALSE);
+            return 0;
         }
+
+        /* Use normal AI */
+        return 0;
     }
 }
 
@@ -718,6 +756,7 @@ clonewiz(void)
     if ((mtmp2 =
          makemon(&mons[PM_WIZARD_OF_YENDOR], level, u.ux, u.uy,
                  NO_MM_FLAGS)) != 0) {
+        flags.double_troubled = TRUE;
         mtmp2->msleeping = 0;
         msethostility(mtmp2, TRUE, FALSE); /* TODO: reset alignment? */
         if (!Uhave_amulet && rn2(2)) {        /* give clone a fake */
@@ -846,6 +885,7 @@ resurrect(void)
         verb = "kill";
         mtmp =
             makemon(&mons[PM_WIZARD_OF_YENDOR], level, u.ux, u.uy, MM_NOWAIT);
+        flags.double_troubled = FALSE;
     } else {
         /* look for a migrating Wizard */
         verb = "elude";

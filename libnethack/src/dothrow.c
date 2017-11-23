@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
+/* Last modified by Alex Smith, 2017-06-29 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -86,10 +86,10 @@ throw_obj(struct obj *obj, const struct nh_cmd_arg *arg,
     if (!uarmg && !Stone_resistance &&
         (obj->otyp == CORPSE && touch_petrifies(&mons[obj->corpsenm]))) {
         pline(msgc_badidea, "You throw the %s corpse with your bare %s.",
-              mons[obj->corpsenm].mname, body_part(HAND));
+              opm_name(obj), body_part(HAND));
         instapetrify(killer_msg(STONING,
             msgprintf("throwing %s corpse without gloves",
-                      an(mons[obj->corpsenm].mname))));
+                      an(opm_name(obj)))));
     }
     if (welded(obj)) {
         weldmsg(msgc_cancelled1, obj);
@@ -303,6 +303,14 @@ dofire(const struct nh_cmd_arg *arg)
         return 0;
     }
 
+    /* If we lack a quiver but are wielding a polearm, auto-apply it
+       appropriately. */
+    if (!uquiver && uwep && is_pole(uwep))
+        return use_pole(uwep, arg);
+    else if (flags.autoswap && !uquiver && uswapwep && is_pole(uswapwep) &&
+             (!uswapwep->cursed || !uswapwep->bknown))
+        return use_pole(uswapwep, arg);
+
     if (check_capacity(NULL))
         return 0;
 
@@ -381,7 +389,7 @@ hitfloor(struct obj *obj)
         return;
     }
     if (IS_ALTAR(level->locations[u.ux][u.uy].typ))
-        doaltarobj(obj);
+        doaltarobj(&youmonst, obj);
     else /* easy to do this by mistake, use a moderately warny msgc */
         pline(msgc_badidea, "%s hit%s the %s.", Doname2(obj),
               (obj->quan == 1L) ? "s" : "", surface(u.ux, u.uy));

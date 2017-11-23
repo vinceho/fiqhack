@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2015-11-20 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-02 */
 /* Copyright (C) 1987, 1988, 1989 by Ken Arromdee */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -68,12 +68,8 @@ polyman(const char *fmt, const char *arg)
     newsym(u.ux, u.uy);
 
     /* check whether player foolishly genocided self while poly'd */
-    if ((mvitals[urole.malenum].mvflags & G_GENOD) ||
-        (urole.femalenum != NON_PM &&
-         (mvitals[urole.femalenum].mvflags & G_GENOD)) ||
-        (mvitals[urace.malenum].mvflags & G_GENOD) ||
-        (urace.femalenum != NON_PM &&
-         (mvitals[urace.femalenum].mvflags & G_GENOD))) {
+    if ((mvitals[urole.num].mvflags & G_GENOD) ||
+        (mvitals[urace.num].mvflags & G_GENOD)) {
         pline(msgc_fatal_predone, "As you return to %s form, you die!",
               urace.adj);
         done(GENOCIDED, delayed_killer(GENOCIDED));
@@ -108,15 +104,10 @@ change_sex(void)
         u.mfemale = !u.mfemale;
     max_rank_sz();      /* [this appears to be superfluous] */
 
-    u.umonster = ((already_polyd ? u.mfemale : u.ufemale) &&
-                  urole.femalenum != NON_PM) ? urole.femalenum : urole.malenum;
-    if (!already_polyd) {
+    u.umonster = urole.num;
+    if (!already_polyd)
         u.umonnum = u.umonster;
-    } else if (u.umonnum == PM_SUCCUBUS || u.umonnum == PM_INCUBUS) {
-        u.ufemale = !u.ufemale;
-        /* change monster type to match new sex */
-        u.umonnum = (u.umonnum == PM_SUCCUBUS) ? PM_INCUBUS : PM_SUCCUBUS;
-    }
+
     set_uasmon();
 }
 
@@ -149,7 +140,6 @@ newman(void)
         change_sex();
 
     adjabil(oldlvl, (int)u.ulevel);
-    reset_rndmonst(NON_PM);     /* new monster generation criteria */
 
     /* random experience points for the new experience level */
     u.uexp = rndexp(FALSE);
@@ -306,7 +296,7 @@ polyself(boolean forcecontrol)
 
         if (Upolyd) {
             kbuf = msgprintf("polymorphing into %s while wielding",
-                             an(mons[u.umonnum].mname));
+                             an(pm_name(&youmonst)));
         } else {
             kbuf = msgprintf("returning to %s form while wielding", urace.adj);
         }
@@ -532,12 +522,14 @@ polymon(int mntmp, boolean noisy)
                   (u.umonnum != mntmp) ? "turn into a" : "feel like a new",
                   (is_male(&mons[mntmp]) ||
                    is_female(&mons[mntmp])) ? "" : u.ufemale ? "female " :
-                  "male ", mons[mntmp].mname);
+                  "male ", u.ufemale ? mons[mntmp].fname : mons[mntmp].mname);
     } else if (noisy) {
         if (u.umonnum != mntmp)
-            pline(msgc_statusbad, "You turn into %s!", an(mons[mntmp].mname));
+            pline(msgc_statusbad, "You turn into %s!",
+                  an(u.ufemale ? mons[mntmp].fname : mons[mntmp].mname));
         else
-            pline(msgc_statusend, "You feel like a new %s!", mons[mntmp].mname);
+            pline(msgc_statusend, "You feel like a new %s!",
+                  u.ufemale ? mons[mntmp].fname : mons[mntmp].mname);
     }
 
     u.mtimedone = rn1(500, 500);
@@ -1336,7 +1328,7 @@ mbodypart(struct monst *mon, int part)
             return part == HAND ? "paw" : "pawed";
         if (humanoid(mptr) && attacktype(mptr, AT_CLAW) &&
             !strchr(not_claws, mptr->mlet) && mptr != &mons[PM_STONE_GOLEM] &&
-            mptr != &mons[PM_INCUBUS] && mptr != &mons[PM_SUCCUBUS])
+            mptr != &mons[PM_INCUBUS])
             return part == HAND ? "claw" : "clawed";
     }
     if ((mptr == &mons[PM_MUMAK] || mptr == &mons[PM_MASTODON]) && part == NOSE)

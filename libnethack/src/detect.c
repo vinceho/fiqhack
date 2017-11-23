@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Alex Smith, 2017-11-18 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -53,7 +53,7 @@ find_obj_map(boolean set_dknown, char oclass, unsigned material)
             /* Don't mark UNMAPPED in res unless it's empty or only contains
                player inventory */
             if (ires & OBJDET_UNMAPPED) {
-                if (!res || (res & (OBJDET_MON | OBJDET_SELF)))
+                if (!res || !(res & ~(OBJDET_MON | OBJDET_SELF)))
                     res = ires;
                 ires = 0;
             }
@@ -63,7 +63,7 @@ find_obj_map(boolean set_dknown, char oclass, unsigned material)
                 if ((ires & OBJDET_SELF) && res)
                     ires &= ~OBJDET_SELF;
 
-                res = ires;
+                res |= ires;
             }
         }
     }
@@ -207,7 +207,7 @@ find_obj_match(struct obj *obj,
         if (set_dknown)
             obj->dknown = TRUE;
         if (obj->where == OBJ_FLOOR)
-            update_obj_memory(obj);
+            update_obj_memory(obj, NULL);
     }
 
     return ret;
@@ -261,7 +261,7 @@ gold_detect(struct monst *mon, struct obj *sobj, boolean *scr_known)
     *scr_known = !!obj_res;
     obj_res &= ~OBJDET_UNMAPPED;
 
-    if (!obj_res || (obj_res & (OBJDET_MON | OBJDET_SELF))) {
+    if (!obj_res || !(obj_res & ~(OBJDET_MON | OBJDET_SELF))) {
         /* No gold found, or gold only found in inventory, or
            user is a gold golem */
         const char *buf;
@@ -275,8 +275,11 @@ gold_detect(struct monst *mon, struct obj *sobj, boolean *scr_known)
             buf = "You feel materially poor.";
         if (!(*scr_known))
             strange_feeling(sobj, buf);
-        else
+        else {
             pline(msgc_failcurse, "%s", buf);
+            if (sobj)
+                useup(sobj);
+        }
         return 1;
     }
 
@@ -340,7 +343,7 @@ food_detect(struct obj *sobj, boolean *scr_known)
 
     obj_res &= ~OBJDET_UNMAPPED;
 
-    if (!obj_res || (obj_res & (OBJDET_MON | OBJDET_SELF))) {
+    if (!obj_res || !(obj_res & ~(OBJDET_MON | OBJDET_SELF))) {
         /* nothing found, or only in user inventory */
         doredraw();
         const char *buf;
@@ -348,13 +351,17 @@ food_detect(struct obj *sobj, boolean *scr_known)
                         body_part(NOSE),
                         !u.uedibility && sobj && sobj->blessed ?
                         " then starts to tingle" : "");
-        if (*scr_known)
-            pline(msgc_failcurse, "%s", buf);
-        else
-            strange_feeling(sobj, buf);
 
         if (sobj && sobj->blessed)
             u.uedibility = 1;
+
+        if (*scr_known) {
+            pline(msgc_failcurse, "%s", buf);
+            if (sobj)
+                useup(sobj);
+        } else
+            strange_feeling(sobj, buf);
+
         return 1;
     }
 
@@ -427,6 +434,8 @@ object_detect(struct obj *detector,     /* object doing the detecting */
 
         doredraw();
         pline(msgc_failcurse, "You feel a lack of %s.", stuff);
+        if (detector)
+            useup(detector);
 
         return 1;
     }
@@ -434,10 +443,10 @@ object_detect(struct obj *detector,     /* object doing the detecting */
     obj_res &= ~OBJDET_UNMAPPED;
 
     buf = msgprintf("You sense the %s of %s.",
-                    (!obj_res || (obj_res & (OBJDET_MON | OBJDET_SELF))) ?
+                    (!obj_res || !(obj_res & ~(OBJDET_MON | OBJDET_SELF))) ?
                     "absence" : "presence", stuff);
 
-    if (!obj_res || (obj_res & (OBJDET_MON | OBJDET_SELF))) {
+    if (!obj_res || !(obj_res & ~(OBJDET_MON | OBJDET_SELF))) {
         /* nothing found, or only in user inventory */
         doredraw();
         strange_feeling(detector, buf);
@@ -519,11 +528,18 @@ monster_detect(struct obj *otmp,        /* detecting object (if any) */
                 woken = TRUE;
             }
         }
+
+        /* Temporarily set intrinsic monster detection to give a sane value for
+           farlooking. */
+        boolean had_previously = !!(detects_monsters(&youmonst) & W_MASK(os_outside));
+        set_property(&youmonst, DETECT_MONSTERS, 0, TRUE);
         display_self();
         pline(msgc_youdiscover, "You sense the presence of monsters.");
         if (woken)
             pline(msgc_statusbad, "Monsters sense the presence of you.");
         look_at_map(u.ux, u.uy);
+        if (!had_previously)
+            set_property(&youmonst, DETECT_MONSTERS, -1, TRUE);
         doredraw();
         if (Underwater)
             under_water(2);
@@ -615,9 +631,14 @@ trap_detect(struct monst *mon, struct obj *sobj)
         snprintf(buf, SIZE(buf), "Your %s stop itching.", makeplural(body_part(TOE)));
         if (you)
             strange_feeling(sobj, buf);
-        else if (vis)
-            pline(msgc_failcurse,
-                  "%s was unable to gain any insights.", Monnam(mon));
+        else {
+            if (vis)
+                pline(msgc_failcurse,
+                      "%s was unable to gain any insights.", Monnam(mon));
+            if (sobj)
+                m_useup(mon, sobj);
+        }
+
         return 1;
     }
     /* traps exist, but only under me - no separate display required */
@@ -1375,10 +1396,8 @@ search_tile(int x, int y, struct monst *mon, int autosearch)
             }
         }
 
-        if (already) {
-            action_completed();
+        if (already)
             pline(msgc_yafm, "There's still a monster there.");
-        }
     }
 }
 

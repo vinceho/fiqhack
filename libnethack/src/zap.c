@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -169,10 +169,31 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
         break;
     case WAN_SLOW_MONSTER:
     case SPE_SLOW_MONSTER:
+        dmg = dice(3, 8);
         if (wandlevel)
-            inc_timeout(mdef, SLOW, rn1((4 * wandlevel), (6 * wandlevel)), FALSE);
-        else
-            inc_timeout(mdef, SLOW, dice(3, 8), FALSE);
+            dmg = rn1((4 * wandlevel), (6 * wandlevel));
+
+        if (resists_slow(mdef))
+            dmg = 0;
+
+        /* Redundant with above, but don't anger on
+           guranteed immunity. */
+        obj = which_armor(mdef, os_arm);
+        if (obj &&
+            (obj->otyp == BLUE_DRAGON_SCALES ||
+             obj->otyp == BLUE_DRAGON_SCALE_MAIL)) {
+            dmg = 0;
+            wake = FALSE; /* always safe */
+        }
+
+        if (!dmg) {
+            pline(combat_msgc(magr, mdef, cr_immune),
+                              "%s down momentarily.",
+                              M_verbs(mdef, "slow"));
+            break;
+        }
+
+        inc_timeout(mdef, SLOW, dmg, FALSE);
         if (wandlevel == P_MASTER)
             set_property(mdef, FAST, -2, TRUE);
         else if (wandlevel >= P_SKILLED)
@@ -188,6 +209,9 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
             expels(mdef, mdef->data, TRUE);
             known = TRUE;
         }
+        break;
+    case SPE_SPEED_MONSTER:
+        known = inc_timeout(mdef, FAST, rn1(100, 51), FALSE);
         break;
     case WAN_SPEED_MONSTER:
         dmg = dice(2, 20);
@@ -220,6 +244,12 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
             flags.bypasses = TRUE;      /* for make_corpse() */
             if (hityou) {
                 if (wandlevel < P_SKILLED) {
+                    if (resists_stun(mdef)) {
+                        pline(combat_msgc(magr, mdef, cr_immune),
+                              "You feel disoriented for a moment.");
+                        break;
+                    }
+
                     pline(combat_msgc(magr, mdef, cr_hit),
                           Stunned ? "You struggle to keep your balance." :
                           "You reel...");
@@ -237,6 +267,12 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                         !resist(magr, mdef, otmp->oclass, NOTELL, bcsign(otmp))) ||
                        (wandlevel >= P_SKILLED &&
                         resist(magr, mdef, otmp->oclass, NOTELL, bcsign(otmp)))) {
+                if (resists_stun(mdef)) {
+                    pline(combat_msgc(magr, mdef, cr_immune),
+                          "%s disoriented for a moment.", M_verbs(mdef, "look"));
+                    break;
+                }
+
                 if (tseen) {
                     if (stunned(mdef))
                         pline(combat_msgc(magr, mdef, cr_hit),
@@ -266,9 +302,8 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
             shieldeff(m_mx(mdef), m_my(mdef));
             if (tseen)
                 pline(combat_msgc(magr, mdef, cr_immune),
-                      "%s %s momentarily different.",
-                      hityou ? "You" : Monnam(mdef),
-                      hityou ? "feel" : "looks");
+                      "%s %s momentarily different.", Monnam(mdef),
+                      mfeel(mdef));
             known = TRUE;
         } else if (hityou) {
             polyself(FALSE); /* FIXME: make skilled users able to affect the outcome */
@@ -312,7 +347,7 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
         break;
     case WAN_CANCELLATION:
     case SPE_CANCELLATION:
-        cancel_monst(mdef, otmp, magr, TRUE, FALSE);
+        cancel_monst(mdef, otmp, magr, TRUE, selfzap);
         break;
     case WAN_TELEPORTATION:
     case SPE_TELEPORT_AWAY:
@@ -349,6 +384,12 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
         probe_monster(mdef);
         if (wandlevel >= P_SKILLED)
             enlighten_mon(mdef, 0);
+        if (wandlevel == P_MASTER) {
+            if (mdef == &youmonst || mdef->mspells || mdef->iswiz)
+                show_monster_spells(mdef);
+            else
+                pline(msgc_info, "%s no spells.", M_verbs(mdef, "have"));
+        }
         known = TRUE;
         break;
     case WAN_OPENING:
@@ -403,9 +444,8 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                 } else
                     mimic_hit_msg(mdef, otyp);
             } else
-                pline(msgc_actionok, "%s %s%s better.",
-                      mdef == &youmonst ? "You" : Monnam(mdef),
-                      mdef == &youmonst ? "feel" : "looks",
+                pline(msgc_actionok, "%s %s%s better.", Monnam(mdef),
+                      mfeel(mdef),
                       otyp == SPE_EXTRA_HEALING ? " much" : "");
             if (yours && (mdef->mtame || mdef->mpeaceful)) {
                 adjalign(Role_if(PM_HEALER) ? 1 : sgn(u.ualign.type));
@@ -428,9 +468,8 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                 mdef->mhp = mdef->mhpmax;
             if (tseen)
                 pline(combat_msgc(magr, mdef, cr_immune),
-                      "%s %s strengthened by the flash!",
-                      hityou ? "You" : Monnam(mdef),
-                      hityou ? "feel" : "looks");
+                      "%s %s strengthened by the flash!", Monnam(mdef),
+                      mfeel(mdef));
             break;
         }
 
@@ -896,6 +935,11 @@ revive(struct obj *obj)
                 }
                 /* Monster retains its name */
                 christen_monst(mtmp, ox_name(obj));
+
+                /* And gender */
+                if (!(mtmp->data->mflags2 & (M2_MALE | M2_FEMALE)))
+                    mtmp->female = !!(obj->spe & OPM_FEMALE);
+
                 /* flag the quest leader as alive. */
                 if (mtmp->data->msound == MS_LEADER ||
                     mtmp->m_id == u.quest_status.leader_m_id) {
@@ -1090,10 +1134,6 @@ cancel_item(struct obj *obj)
         costly_cancel(obj);
     unbless(obj);
     uncurse(obj);
-#ifdef INVISIBLE_OBJECTS
-    if (obj->oinvis)
-        obj->oinvis = 0;
-#endif
     return;
 }
 
@@ -1400,7 +1440,7 @@ poly_obj(struct obj *obj, int id)
         otmp->invlet = obj->invlet;
 
     /* avoid abusing eggs laid by you */
-    if (obj->otyp == EGG && obj->spe) {
+    if (obj->otyp == EGG && (obj->spe & OPM_YOULAID)) {
         int mnum, tryct = 100;
 
         /* first, turn into a generic egg */
@@ -1417,7 +1457,7 @@ poly_obj(struct obj *obj, int id)
         while (tryct--) {
             mnum = can_be_hatched(rn2(NUMMONS));
             if (mnum != NON_PM && !dead_species(mnum, TRUE)) {
-                otmp->spe = 1;  /* layed by hero */
+                otmp->spe |= OPM_YOULAID;  /* layed by hero */
                 otmp->corpsenm = mnum;
                 attach_egg_hatch_timeout(otmp);
                 break;
@@ -1868,18 +1908,21 @@ bhito(struct obj *obj, struct obj *otmp)
         case SPE_TELEPORT_AWAY:
             rloco(obj);
             break;
-        case WAN_MAKE_INVISIBLE:
-#ifdef INVISIBLE_OBJECTS
-            obj->oinvis = TRUE;
-            newsym(obj->ox, obj->oy);   /* make object disappear */
-#endif
-            break;
         case WAN_UNDEAD_TURNING:
         case SPE_TURN_UNDEAD:
             if (obj->otyp == EGG)
                 revive_egg(obj);
-            else
-                res = ! !revive(obj);
+            else if (obj->otyp == CORPSE) {
+                struct monst *revived = revive(obj);
+                if (revived && canseemon(revived)) {
+                    pline(msgc_monneutral,
+                          "%s %s again!", M_verbs(revived, "are"),
+                          nonliving(revived->data) ? "walking" :
+                          "alive");
+
+                    res = TRUE;
+                }
+            }
             break;
         case WAN_OPENING:
         case SPE_KNOCK:
@@ -1892,9 +1935,11 @@ bhito(struct obj *obj, struct obj *otmp)
             if (res /* && otmp->oclass == WAND_CLASS */ )
                 makeknown(otmp->otyp);
             break;
-        case WAN_SLOW_MONSTER: /* no effect on objects */
+        case WAN_MAKE_INVISIBLE: /* no effect on objects */
+        case WAN_SLOW_MONSTER:
         case SPE_SLOW_MONSTER:
         case WAN_SPEED_MONSTER:
+        case SPE_SPEED_MONSTER:
         case WAN_NOTHING:
         case SPE_HEALING:
         case SPE_EXTRA_HEALING:
@@ -2193,6 +2238,7 @@ zap_steed(struct obj *obj)
     case WAN_SLOW_MONSTER:
     case SPE_SLOW_MONSTER:
     case WAN_SPEED_MONSTER:
+    case SPE_SPEED_MONSTER:
     case SPE_HEALING:
     case SPE_EXTRA_HEALING:
     case SPE_DRAIN_LIFE:
@@ -2218,32 +2264,48 @@ boolean
 cancel_monst(struct monst *mdef, struct obj *obj, struct monst *magr,
              boolean allow_cancel_kill, boolean self_cancel)
 {
-    boolean youdefend = (mdef == &youmonst);
-    static const char writing_vanishes[] =
-        "Some writing vanishes from %s head!";
-    static const char your[] = "your";  /* should be extern */
+    boolean uagr = (magr == &youmonst);
+    boolean udef = (mdef == &youmonst);
+    boolean vis = (uagr || udef || canseemon(mdef));
 
     /* Nonplayers can use resist() in place of MR. */
     boolean has_mr = FALSE;
-    if (!youdefend) {
+    if (!udef) {
         if (magr != mdef && resist(magr, mdef, obj->oclass, NOTELL, bcsign(obj)))
             has_mr = TRUE;
     }
     if (resists_magm(mdef))
         has_mr = TRUE;
 
-    int wandlevel = 0;
+    int skill = P_BASIC;
     if (obj->oclass == WAND_CLASS)
-        wandlevel = getwandlevel(magr, obj);
+        skill = getwandlevel(magr, obj);
+    else if (obj->oclass == SPBOOK_CLASS)
+        skill = mprof(magr, MP_SMATR);
 
-    /* Cancel is averted with MR (or for non-players, resist() as well) 100% of the time
-       below expert wands (and for the spell), 90% of the time for expert wands,
-       50% at the time for master wands */
-    if (has_mr && magr != mdef &&
-        (!wandlevel || wandlevel < P_EXPERT ||
-         (wandlevel == P_EXPERT ? rn2(10) :
-          wandlevel == P_MASTER ? rn2(2) : 0)))
+    if (vis)
+        pline(combat_msgc(magr, mdef, cr_hit),
+              "You %s magical energies being absorbed from %s vicinity.",
+              udef ? "feel" : "sense", s_suffix(mon_nam(mdef)));
+
+    /*
+     * MR can avoid being cancelled, but doesn't always work.
+     * Unskilled: 100%
+     * Basic, or non-wand/non-spell: 80%
+     * Skilled: 66%
+     * Expert: 50%
+     * Master: 33%
+     */
+    if (has_mr && !self_cancel &&
+        (skill == P_UNSKILLED ?    1 :
+         skill == P_BASIC   ? rn2(5) :
+         skill == P_SKILLED ? rn2(3) :
+         skill == P_EXPERT  ? rn2(2) :
+         skill == P_MASTER ? !rn2(3) : 1)) {
+        if (vis)
+            shieldeff(m_mx(mdef), m_my(mdef));
         return FALSE;
+    }
 
     if (self_cancel) {  /* 1st cancel inventory */
         struct obj *otmp;
@@ -2254,7 +2316,7 @@ cancel_monst(struct monst *mdef, struct obj *obj, struct monst *magr,
 
     set_property(mdef, CANCELLED, 0, FALSE);
     if (is_were(mdef->data) && mdef->data->mlet != S_HUMAN) {
-        if (youdefend)
+        if (udef)
             you_unwere(FALSE);
         else
             were_change(mdef);
@@ -2265,9 +2327,10 @@ cancel_monst(struct monst *mdef, struct obj *obj, struct monst *magr,
            see writing vanishing */
         if (canseemon(mdef))
             pline(combat_msgc(magr, mdef, allow_cancel_kill ? cr_kill : cr_hit),
-                  writing_vanishes, youdefend ? your : s_suffix(mon_nam(mdef)));
+                  "Some writing vanishes from %s %s!", s_suffix(mon_nam(mdef)),
+                  mbodypart(mdef, HEAD));
         if (allow_cancel_kill) {
-            if (youdefend)
+            if (udef)
                 rehumanize(DIED, "loss of magical runes");
             else
                 monkilled(magr, mdef, "", AD_RBRE);
@@ -2635,18 +2698,15 @@ hit(const char *str, struct monst *mdef, const char *force,
               "%s %s it.", The(str), vtense(str, "hit"));
     else
         pline(combat_msgc(magr, mdef, cr_hit),
-              "%s %s %s%s", The(str), vtense(str, "hit"),
-              mdef == &youmonst ? "you" : mon_nam(mdef), force);
+              "%s %s %s%s", The(str), vtense(str, "hit"), mon_nam(mdef),
+              force);
 }
 
 void
 miss(const char *str, struct monst *mdef, struct monst *magr)
 {
     pline(combat_msgc(magr, mdef, cr_miss), "%s %s %s.",
-          The(str), vtense(str, "miss"),
-          ((cansee(bhitpos.x, bhitpos.y) || canspotmon(mdef) ||
-            mdef == &youmonst) && flags.verbose) ?
-          (mdef == &youmonst ? "you" : mon_nam(mdef)) : "it");
+          The(str), vtense(str, "miss"), mon_nam(mdef));
 }
 
 /* bhit() -- zap immediate wand in any direction. */
@@ -2723,7 +2783,7 @@ bhit(struct monst *mon, int dx, int dy, int range, struct obj *obj) {
             pline(combat_msgc(mon, mdef, cr_miss),
                   "The %s passes through %s displaced image!",
                   obj->otyp == EXPENSIVE_CAMERA ? "flash" : "beam",
-                  mdef == &youmonst ? "your" : s_suffix(mon_nam(mdef)));
+                  s_suffix(mon_nam(mdef)));
         }
         /* boulders block vision, so make them block camera flashes too... */
         if (sobj_at(BOULDER, level, bhitpos.x, bhitpos.y) &&
@@ -3031,7 +3091,7 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
 {
     int tmp = dice(nd, 6);
     int abstype = abs(type) % 10;
-    int resisted = 0; /* 1=show msg, 2=don't */
+    int resisted = 0; /* 1=show msg, 2=don't, 3=partially resist (half damage) */
     const char *ztyp;
     const char *fltxt;
     boolean oseen = FALSE;
@@ -3055,6 +3115,13 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         bcsign = raylevel - wandlevel;
 
     fltxt = flash_types[buzztyp];
+
+    /* Check for prayer */
+    if (you && u.uinvulnerable) {
+        pline(combat_msgc(magr, mdef, cr_immune), "You're unaffected.");
+        return;
+    }
+
     switch (abstype) {
     case ZT_MAGIC_MISSILE:
         if (resists_magm(mdef)) {
@@ -3081,7 +3148,7 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         break;
     case ZT_FIRE:
         ztyp = "hot";
-        if (resists_fire(mdef)) {
+        if (immune_to_fire(mdef)) {
             resisted = 1;
             if (likes_fire(mdef->data)) {
                 /* innately hot creatures probably look hot... */
@@ -3090,8 +3157,9 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
                     pline(combat_msgc(magr, mdef, cr_immune),
                           "%s unharmed!", M_verbs(mdef, "are"));
             }
-        }
-        if (resists_cold(mdef)) {
+        } else if (resists_fire(mdef))
+            resisted = 3;
+        else if (resists_cold(mdef)) {
             tmp += dice(nd, 3);
             if (oseen && hallucinating(&youmonst))
                 pline(combat_msgc(magr, mdef, cr_hit),
@@ -3115,9 +3183,11 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         break;
     case ZT_COLD:
         ztyp = "cold";
-        if (resists_cold(mdef))
+        if (immune_to_cold(mdef))
             resisted = 1;
-        if (resists_fire(mdef)) {
+        else if (resists_cold(mdef))
+            resisted = 3;
+        else if (resists_fire(mdef)) {
             tmp += dice(nd, 3);
             if (oseen && hallucinating(&youmonst))
                 pline(combat_msgc(magr, mdef, cr_hit),
@@ -3134,10 +3204,16 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
     case ZT_SLEEP:
         ztyp = "sleepy";
         tmp = 0;
-        if (resists_sleep(mdef))
+        if (immune_to_sleep(mdef))
             resisted = 1;
         else {
-            sleep_monst(magr, mdef, dice(nd, 6),
+            int turns = dice(nd, 6);
+            if (resists_sleep(mdef) &&
+                (mdef == &youmonst || canseemon(mdef)))
+                pline(combat_msgc(magr, mdef, cr_resist),
+                      "%s a bit %s.", M_verbs(mdef, "feel"), ztyp);
+
+            sleep_monst(magr, mdef, turns,
                         buzztyp == ZT_WAND(ZT_SLEEP) ? WAND_CLASS : '\0');
             if (!you)
                 slept_monst(mdef);
@@ -3160,11 +3236,27 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
                 mdef->mhp = mdef->mhpmax;
                 return;
             }
-            if (nonliving(mdef->data) || is_demon(mdef->data) ||
-                (!selfzap && resists_magm(mdef)) ||
-                raylevel == P_UNSKILLED) {
-                if (resists_drli(mdef) || raylevel <= P_SKILLED) {
-                    resisted = 2;
+            /*
+             * Unskilled: leveldrain unless magic/drain resistant
+             * Basic-Skilled: death unless magic resistant
+             * >=Expert: death unless MR, otherwise leveldrain unless drain resistant
+             */
+            boolean death = TRUE;
+            boolean drain = FALSE;
+            if (raylevel == P_UNSKILLED) {
+                death = FALSE;
+                if (selfzap || !resists_magm(mdef))
+                    drain = TRUE;
+            }
+            if (raylevel >= P_EXPERT)
+                drain = TRUE;
+
+            if (resists_death(mdef) || (!selfzap && resists_magm(mdef)))
+                death = FALSE;
+            if (resists_drli(mdef))
+                drain = FALSE;
+            if (!death) {
+                if (!drain) {
                     if (oseen) {
                         if (selfzap && wand)
                             pline(msgc_yafm, "The wand shoots an apparently "
@@ -3173,10 +3265,10 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
                             pline(combat_msgc(magr, mdef, cr_immune),
                                   "%s unaffected.", M_verbs(mdef, "are"));
                     }
-                    break;
                 } else
                     mlosexp(magr, mdef,
                             "drained by a wand of death", FALSE);
+                return;
             } else if (selfzap && (you || oseen))
                 pline(combat_msgc(magr, mdef, cr_kill),
                       "%s %sself with pure energy!", M_verbs(mdef, "irradiate"),
@@ -3210,20 +3302,21 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
                 if (is_suit(otmp) &&
                     (otmp2 = which_armor(mdef, os_armc))) {
                     if (!item_provides_extrinsic(otmp2, DISINT_RES, &dummy))
-                        destroy_arm(mdef, otmp2);
+                        disint_arm(mdef, otmp2);
                 }
 
                 if (!item_provides_extrinsic(otmp, DISINT_RES, &dummy))
-                    destroy_arm(mdef, otmp);
+                    disint_arm(mdef, otmp);
                 return;
             }
 
             if ((otmp = which_armor(mdef, os_armc)) &&
                 !item_provides_extrinsic(otmp, DISINT_RES, &dummy))
-                destroy_arm(mdef, otmp);
+                disint_arm(mdef, otmp);
+
             if ((otmp = which_armor(mdef, os_armu)) &&
                 !item_provides_extrinsic(otmp, DISINT_RES, &dummy))
-                destroy_arm(mdef, otmp);
+                disint_arm(mdef, otmp);
 
             if (resists_disint(mdef)) {
                 shieldeff(m_mx(mdef), m_my(mdef));
@@ -3241,13 +3334,16 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
             done(DIED, killer_msg(DIED, an(fltxt)));
         } else {
             mdef->mhp = -1;
-            monkilled(magr, mdef, "", disintegrated ? -AD_RBRE : AD_RBRE);
+            monkilled(magr, mdef, disintegrated ? NULL : "",
+                      disintegrated ? -AD_RBRE : AD_RBRE);
         }
         return; /* lifesaved */
     case ZT_LIGHTNING:
         ztyp = "shocked";
-        if (resists_elec(mdef))
+        if (immune_to_elec(mdef))
             resisted = 1;
+        else if (resists_elec(mdef))
+            resisted = 3;
         else if (you)
             exercise(A_CON, FALSE);
         if (!resisted && selfzap && oseen)
@@ -3269,7 +3365,7 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         break;
     case ZT_POISON_GAS:
         ztyp = "affected";
-        if (resists_poison(mdef)) {
+        if (immune_to_poison(mdef)) {
             resisted = 1;
             break;
         }
@@ -3279,8 +3375,10 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         break;
     case ZT_ACID:
         ztyp = "burned";
-        if (resists_acid(mdef))
+        if (immune_to_acid(mdef))
             resisted = 1;
+        else if (resists_acid(mdef))
+            resisted = 3;
         else if (you) {
             pline_implied(combat_msgc(magr, mdef, cr_hit),
                           "The acid burns!");
@@ -3296,21 +3394,27 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         break;
     case ZT_STUN:
         ztyp = "stunned";
-        if (you)
-            exercise(A_DEX, FALSE);
-        inc_timeout(mdef, STUNNED, tmp, FALSE);
-        tmp = 0;
+        if (resists_stun(mdef))
+            resisted = 1;
+        else {
+            if (you)
+                exercise(A_DEX, FALSE);
+            inc_timeout(mdef, STUNNED, tmp, FALSE);
+            tmp = 0;
+        }
         break;
     }
     if (resisted) {
         shieldeff(m_mx(mdef), m_my(mdef));
-        if (ztyp && resisted == 1)
-            pline(combat_msgc(magr, mdef, cr_immune),
-                  "%s %s %s.",
-                  you ? "You" : Monnam(mdef),
-                  you ? "don't feel" : "doesn't seem",
-                  ztyp);
-        return;
+        if (ztyp) {
+            if (resisted == 1) {
+                pline(combat_msgc(magr, mdef, cr_immune),
+                      "%sn't feel %s.", M_verbs(mdef, "do"), ztyp);
+                return;
+            } else if (resisted == 3)
+                pline(combat_msgc(magr, mdef, cr_resist),
+                      "%s a bit %s.", M_verbs(mdef, "feel"), ztyp);
+        }
     }
     if (tmp && spellcaster)
         tmp += spell_damage_bonus();
@@ -3322,6 +3426,8 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
         tmp /= 2;
     if (half_spell_dam(mdef) && tmp && buzztyp < ZT_BREATH(0))
         tmp = (tmp + 1) / 2;
+    if (resisted == 3)
+        tmp /= 2;
     if (tmp < 0)
         tmp = 0;        /* don't allow negative damage */
     if (raylevel == P_UNSKILLED) {
@@ -3685,7 +3791,7 @@ break_statue(struct obj *obj)
         place_object(item, level, obj->ox, obj->oy);
     }
     if (Role_if(PM_ARCHEOLOGIST) && !flags.mon_moving &&
-        (obj->spe & STATUE_HISTORIC)) {
+        (obj->spe & OPM_HISTORIC)) {
         if (cansee(obj->ox, obj->oy))
             pline(msgc_alignbad,
                   "You feel guilty about damaging such a historic statue.");
@@ -3847,6 +3953,9 @@ destroy_mitem(struct monst *mtmp, int osym, int dmgtyp, const char **killer)
                       xname(obj),
                       (cnt > 1L) ? destroy_messages[dindx].singular
                       : destroy_messages[dindx].plural);
+
+            if (cnt > obj->quan)
+                cnt = obj->quan; /* for wand sparks */
             for (i = 0; i < cnt; i++)
                 m_useup(mtmp, obj);
         }

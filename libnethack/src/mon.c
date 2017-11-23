@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-15 */
+/* Last modified by Alex Smith, 2016-06-30 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -189,6 +189,8 @@ static const short cham_to_pm[] = {
 static struct obj *
 make_corpse(struct monst *mtmp)
 {
+    boolean female = mtmp->female;
+    boolean unique = !!(mtmp->data->geno & G_UNIQ);
     const struct permonst *mdat = mtmp->data;
     int num;
     struct obj *obj = NULL;
@@ -235,6 +237,7 @@ make_corpse(struct monst *mtmp)
         /* include mtmp in the mkcorpstat() call */
         num = undead_to_corpse(mndx);
         obj = mkcorpstat(CORPSE, mtmp, &mons[num], level, x, y, TRUE, rng_main);
+        obj->spe = (female ? OPM_FEMALE : OPM_MALE);
         obj->age -= 100;        /* this is an *OLD* corpse */
         break;
     case PM_KOBOLD_MUMMY:
@@ -256,6 +259,7 @@ make_corpse(struct monst *mtmp)
         num = undead_to_corpse(mndx);
         obj = mkcorpstat(CORPSE, mtmp, &mons[num], level, x, y, TRUE,
                          rng_main);
+        obj->spe = (female ? OPM_FEMALE : OPM_MALE);
         obj->age -= 100;        /* this is an *OLD* corpse */
         break;
     case PM_IRON_GOLEM:
@@ -279,6 +283,9 @@ make_corpse(struct monst *mtmp)
         break;
     case PM_STONE_GOLEM:
         obj = mkcorpstat(STATUE, NULL, mdat, level, x, y, FALSE, rng_main);
+        obj->spe = (female ? OPM_FEMALE : OPM_MALE);
+        if (unique)
+            obj->spe |= OPM_HISTORIC;
         break;
     case PM_WOOD_GOLEM:
         num = dice(2, 4);
@@ -310,6 +317,7 @@ make_corpse(struct monst *mtmp)
             return NULL;
         obj = mkcorpstat(CORPSE, KEEPTRAITS(mtmp) ? mtmp : 0, mdat, level, x,
                          y, TRUE, rng_main);
+        obj->spe = (female ? OPM_FEMALE : OPM_MALE);
         break;
     }
     /* All special cases should precede the G_NOCORPSE check */
@@ -329,11 +337,6 @@ make_corpse(struct monst *mtmp)
        substitutes the word "something" if the corpse's obj->dknown is 0. */
     if (Blind && !sensemon(mtmp))
         obj->dknown = 0;
-
-#ifdef INVISIBLE_OBJECTS
-    /* Invisible monster ==> invisible corpse */
-    obj->oinvis = invisible(mtmp);
-#endif
 
     stackobj(obj);
     if (mtmp->dlevel == level)
@@ -393,7 +396,8 @@ minliquid(struct monst *mtmp)
            protect their stuff. Fire resistant monsters can only protect
            themselves  --ALI */
         burn_away_slime(mtmp);
-        if (!is_clinger(mtmp->data) && !likes_lava(mtmp->data)) {
+        if (!is_clinger(mtmp->data) && !likes_lava(mtmp->data) &&
+            !immune_to_fire(mtmp)) {
             /* check if water walking boots should burn */
             struct obj *armf = which_armor(mtmp, os_armf);
             if (waterwalks(mtmp) && armf && is_organic(armf) &&
@@ -785,7 +789,8 @@ meatmetal(struct monst *mtmp)
                 }
                 /* The object's rustproofing is gone now */
                 otmp->oerodeproof = 0;
-                set_property(mtmp, STUNNED, dice(4, 4), FALSE);
+                if (!resists_stun(mtmp))
+                    set_property(mtmp, STUNNED, dice(4, 4), FALSE);
                 if (canseemon(mtmp) && flags.verbose) {
                     pline_implied(mtmp->mtame ?
                                   msgc_petneutral : msgc_monneutral,
@@ -1033,10 +1038,6 @@ mpickstuff(struct monst *mon, boolean autopickup)
         /* we are dealing with a box, check if it has been inspected */
         if (otmp->mknown)
             continue; /* handle this later */
-#ifdef INVISIBLE_OBJECTS
-        if (obj->oinvis && !see_invisible(mtmp))
-            continue;
-#endif
         if (!otmp->mbknown && otmp->otyp != ICE_BOX) {
             /* we don't know if it is trapped or not, use SDD or detect
                unseen if we can */
@@ -1102,10 +1103,6 @@ mpickstuff_dopickup(struct monst *mon, struct obj *container, boolean autopickup
             }
             continue;
         }
-#ifdef INVISIBLE_OBJECTS
-        if (obj->oinvis && !see_invisible(mtmp))
-            continue;
-#endif
         /* For bags, monsters only loot them if they aren't already interested in
            picking the bag up instead */
         bag = (obj->otyp == SACK || obj->otyp == OILSKIN_SACK ||
@@ -1608,11 +1605,11 @@ nexttry:       /* eels prefer the water, but if there is no water nearby, they
                                  && !is_clinger(mdat))
                              || In_sokoban(&u.uz))
                             && (ttmp->ttyp != SLP_GAS_TRAP ||
-                                !resists_sleep(mon))
+                                !immune_to_sleep(mon))
                             && (ttmp->ttyp != BEAR_TRAP ||
                                 (mdat->msize > MZ_SMALL && !amorphous(mdat) &&
                                  !flying(mon)))
-                            && (ttmp->ttyp != FIRE_TRAP || !resists_fire(mon))
+                            && (ttmp->ttyp != FIRE_TRAP || !immune_to_fire(mon))
                             && (ttmp->ttyp != SQKY_BOARD || !flying(mon) ||
                                 !levitates(mon))
                             && (ttmp->ttyp != WEB ||
@@ -1710,10 +1707,6 @@ do_grudge(const struct permonst *pm1, const struct permonst *pm2)
     /* angels vs. demons */
     if (pm1->mlet == S_ANGEL && is_demon(pm2))
         return 1;
-    /* dogs vs cats */
-    if (is_domestic(pm1) && is_domestic(pm2) &&
-        pm1->mlet == S_DOG && pm2->mlet == S_FELINE)
-        return 1;
 
     /* Asymmetrical */
     /* purple worms eat shriekers */
@@ -1809,6 +1802,13 @@ mm_aggression(const struct monst *magr, /* monster that might attack */
          !nonliving(magr->data)))
         return ALLOW_M | ALLOW_TM;
 
+    /* dogs vs cats unless both are tame */
+    if ((!magr->mtame || !mdef->mtame) &&
+        is_domestic(magr->data) && is_domestic(mdef->data) &&
+        ((magr->data->mlet == S_DOG && mdef->data->mlet == S_FELINE) ||
+         (magr->data->mlet == S_FELINE && mdef->data->mlet == S_DOG)))
+        return ALLOW_M | ALLOW_TM;
+
     /* pets attack hostile monsters */
     if (magr->mtame && !mdef->mpeaceful)
         return ALLOW_M | ALLOW_TM;
@@ -1873,7 +1873,7 @@ dmonsfree(struct level *lev)
 }
 
 
-/* called when monster is moved to larger structure */
+/* called when monster is revived */
 void
 replmon(struct monst *mtmp, struct monst *mtmp2)
 {
@@ -1893,13 +1893,14 @@ replmon(struct monst *mtmp, struct monst *mtmp2)
         place_monster(mtmp2, mtmp2->mx, mtmp2->my, FALSE);
     if (mtmp2->wormno)  /* update level->monsters[wseg->wx][wseg->wy] */
         place_wsegs(mtmp2);     /* locations to mtmp2 not mtmp. */
-    if (emits_light(mtmp2->data)) {
+    if (emits_light(mtmp2->data))
         /* since this is so rare, we don't have any `mon_move_light_source' */
         new_light_source(mtmp2->dlevel, mtmp2->mx, mtmp2->my,
                          emits_light(mtmp2->data), LS_MONSTER, mtmp2);
-        /* here we rely on the fact that `mtmp' hasn't actually been deleted */
+
+    if (emits_light(mtmp->data))
+        /* might not be the same (shapechangers...) */
         del_light_source(mtmp->dlevel, LS_MONSTER, mtmp);
-    }
 
     if (displaced(mtmp2))
         mtmp2->dlevel->dmonsters[mtmp2->dx][mtmp2->dy] = mtmp2;
@@ -1968,8 +1969,10 @@ m_detach(struct monst *mtmp, const struct permonst *mptr)
     mtmp->mtrapped = 0;
     mtmp->mhp = 0;      /* simplify some tests: force mhp to 0 */
     relobj(mtmp, 0, FALSE);
-    if (isok(mtmp->mx, mtmp->my))
+    if (isok(mtmp->mx, mtmp->my)) {
         mtmp->dlevel->monsters[mtmp->mx][mtmp->my] = NULL;
+        mtmp->dlevel->dmonsters[mtmp->dx][mtmp->dy] = NULL;
+    }
     if (emits_light(mptr))
         del_light_source(mtmp->dlevel, LS_MONSTER, mtmp);
     if (mtmp->dlevel == level && isok(mtmp->mx, mtmp->my))
@@ -2196,7 +2199,7 @@ corpse_chance(struct monst *mon,
                           body_part(STOMACH));
                     if (Half_physical_damage)
                         tmp = (tmp + 1) / 2;
-                    losehp(tmp, msgprintf("%s explosion", s_suffix(mdat->mname)));
+                    losehp(tmp, msgprintf("%s explosion", s_suffix(pm_name(mon))));
                 } else {
                     You_hear(msgc_levelsound, "an explosion.");
                     magr->mhp -= tmp;
@@ -2215,7 +2218,7 @@ corpse_chance(struct monst *mon,
             }
 
             explode(mon->mx, mon->my, -1, tmp, MON_EXPLODE, EXPL_NOXIOUS,
-                    msgcat(s_suffix(mdat->mname), " explosion"), 0);
+                    msgcat(s_suffix(pm_name(mon)), " explosion"), 0);
             return FALSE;
         }
     }
@@ -2305,6 +2308,7 @@ monstone(struct monst *mdef)
     struct obj *otmp, *obj, *oldminvent;
     xchar x = mdef->mx, y = mdef->my;
     boolean wasinside = FALSE;
+    boolean female = mdef->female;
 
     /* we have to make the statue before calling mondead, to be able to put
        inventory in it, and we have to check for lifesaving before making the
@@ -2346,6 +2350,10 @@ monstone(struct monst *mdef)
            monster traits won't retain any stale item-conferred attributes */
         otmp = mkcorpstat(STATUE, KEEPTRAITS(mdef) ? mdef : 0, mdef->data,
                           level, x, y, FALSE, rng_main);
+        otmp->spe = (female ? OPM_FEMALE : OPM_MALE);
+        if (mdef->data->geno & G_UNIQ)
+            otmp->spe |= OPM_HISTORIC;
+
         if (mx_name(mdef))
             otmp = oname(otmp, mx_name(mdef));
         while ((obj = oldminvent) != 0) {
@@ -2659,7 +2667,7 @@ mon_to_stone(struct monst *mtmp)
         if (newcham(mtmp, &mons[PM_STONE_GOLEM], FALSE, FALSE)) {
             if (canseemon(mtmp))
                 pline_implied(mtmp->mtame ? msgc_petneutral : msgc_monneutral,
-                              "Now it's %s.", an(mtmp->data->mname));
+                              "Now it's %s.", an(pm_name(mtmp)));
         } else {
             if (canseemon(mtmp))
                 pline(msgc_noconsequence, "... and returns to normal.");
@@ -2850,11 +2858,20 @@ mnearto(struct monst * mtmp, xchar x, xchar y, boolean move_other)
     if (!goodpos(level, newx, newy, mtmp, 0)) {
         /* actually we have real problems if enexto ever fails. migrating_mons
            that need to be placed will cause no end of trouble. */
-        if (!enexto(&mm, level, newx, newy, mtmp->data))
+        if (!enexto(&mm, level, newx, newy, mtmp->data)) {
+            /* Try water */
             if (!enexto_core(&mm, level, newx, newy, mtmp->data,
-                             MM_IGNOREWATER))
-                panic("Nowhere to place '%s' (at (%d, %d), wanted (%d, %d))",
-                      k_monnam(mtmp), mtmp->mx, mtmp->my, x, y);
+                             MM_IGNOREWATER)) {
+                /* Check if our current position is ok... */
+                if (goodpos(level, mtmp->mx, mtmp->my, mtmp, MM_IGNOREWATER)) {
+                    mm.x = mtmp->mx;
+                    mm.y = mtmp->my;
+                } else
+                    panic("Nowhere to place '%s' (at (%d, %d), wanted (%d, %d))",
+                          k_monnam(mtmp), mtmp->mx, mtmp->my, x, y);
+            }
+        }
+
         newx = mm.x;
         newy = mm.y;
     }
@@ -2921,20 +2938,24 @@ poisoned(struct monst *mon, const char *string, int typ, const char *killer,
     if (!you)
         rng = rng_main;
 
-    i = resists_poison(mon) ? 0 : rn2_on_rng(permanent, rng);
+    /* With resistance, you only lose attributes 1/3 as often.
+       Also, the attribute loss, when it happens, is smaller,
+       as done later. */
+    i = immune_to_poison(mon) ? 0 : rn2_on_rng(permanent * 3, rng);
+    if (!resists_poison(mon))
+        i /= 3;
 
     if (vis && strcmp(string, "blast") && !thrown_weapon) {
         /* 'blast' has already given a 'poison gas' message */
         /* so have "poison arrow", "poison dart", etc... */
         plural = (string[strlen(string) - 1] == 's') ? 1 : 0;
         /* avoid "The" Orcus's sting was poisoned... */
-        pline(resists_poison(mon) ?
-              combat_msgc(NULL, mon, cr_immune) :
+        pline(immune_to_poison(mon) ? combat_msgc(NULL, mon, cr_immune) :
               i == 0 && you ? msgc_intrloss :
               combat_msgc(NULL, mon, cr_hit),
               "%s%s %s poisoned%s", isupper(*string) ? "" : "The ",
               string, plural ? "were" : "was",
-              resists_poison(mon) ?
+              immune_to_poison(mon) ?
               msgcat_many(", but doesn't affect ", mon_nam(mon), ".",
                           NULL) : "!");
         resist_message_printed = TRUE;
@@ -2944,15 +2965,22 @@ poisoned(struct monst *mon, const char *string, int typ, const char *killer,
         if (!strcmp(string, "blast") && vis)
             shieldeff(u.ux, u.uy);
         if (!resist_message_printed && vis)
-            pline(msgc_playerimmune, "%sn't poisoned.",
-                  M_verbs(mon, "are"));
-        return;
+            pline(combat_msgc(NULL, mon, immune_to_poison(mon) ? cr_immune :
+                              cr_resist),
+                  "%s%s poisoned.", M_verbs(mon, "are"),
+                  immune_to_poison(mon) ? "n't" : " only slightly");
+        if (immune_to_poison(mon))
+            return;
     }
 
     if (i <= 5) {
+        int dmg = 3 + rn2_on_rng(3, permanent);
+        if (resists_poison(mon))
+            dmg = (dmg + 2) / 3;
+
         if (you) {
             /* Check that a stat change was made */
-            if (adjattrib(typ, thrown_weapon ? -1 : -rn1(3, 3), 1)) {
+            if (adjattrib(typ, thrown_weapon ? -1 : -dmg, 1)) {
                 pline(msgc_intrloss, "You%s%s!", poiseff[typ],
                       !i ? " permanently" : "");
                 if (!i)
@@ -2962,7 +2990,7 @@ poisoned(struct monst *mon, const char *string, int typ, const char *killer,
             if (vis)
                 pline(combat_msgc(NULL, mon, cr_hit),
                       "%s weaker!", M_verbs(mon, "look"));
-            mon->mhpmax -= (thrown_weapon ? 1 : rn1(3, 3));
+            mon->mhpmax -= (thrown_weapon ? 1 : dmg);
             if (mon->mhpmax < 1)
                 mon->mhpmax = 1;
             if (mon->mhp > mon->mhpmax)
@@ -2970,7 +2998,7 @@ poisoned(struct monst *mon, const char *string, int typ, const char *killer,
         }
     } else {
         i = thrown_weapon ? rnd(6) : rn1(10, 6);
-        if (Half_physical_damage)
+        if (resists_poison(mon))
             i = (i + 1) / 2;
         if (you)
             losehp(i, killer);

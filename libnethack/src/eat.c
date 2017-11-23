@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-09 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -123,7 +123,7 @@ food_xname(struct obj *food, boolean the_pfx)
         result = msgprintf("%s%s corpse",
                            (the_pfx && !type_is_pname(&mons[mnum])) ?
                            "the " : "",
-                           s_suffix(mons[mnum].mname));
+                           s_suffix(opm_name(food)));
     } else {
         /* the ordinary case */
         result = singular(food, xname);
@@ -608,13 +608,17 @@ cpostfx(struct monst *mon, int pm)
             mon->mhp = mon->mhpmax;
         break;
     case PM_STALKER:
+        if (invisible(mon))
+            set_property(mon, SEE_INVIS, 0, FALSE);
         set_property(mon, INVIS, invisible(mon) ? 0 : rn1(100, 50), FALSE);
         /* fall into next case */
     case PM_GIANT_BAT:
-        set_property(mon, STUNNED, 30, TRUE);
+        if (!resists_stun(mon))
+            set_property(mon, STUNNED, 30, TRUE);
         /* fall into next case */
     case PM_BAT:
-        set_property(mon, STUNNED, 30, TRUE);
+        if (!resists_stun(mon))
+            set_property(mon, STUNNED, 30, TRUE);
         break;
     case PM_GIANT_MIMIC:
         tmp += 10;
@@ -638,7 +642,7 @@ cpostfx(struct monst *mon, int pm)
                 Hallucination ?
                 "You suddenly dread being peeled and mimic %s again!" :
                 "You now prefer mimicking %s again.",
-                an(Upolyd ? youmonst.data->mname : urace.noun));
+                an(Upolyd ? pm_name(&youmonst) : urace.noun));
             helpless(tmp, hr_mimicking, "pretending to be a pile of gold", buf);
             youmonst.m_ap_type = M_AP_OBJECT;
             youmonst.mappearance = Hallucination ? ORANGE : GOLD_PIECE;
@@ -824,7 +828,7 @@ eat_tin_one_turn(void)
         goto use_me;
     }
     pline(msgc_actionok, "You succeed in opening the tin.");
-    if (u.utracked[tos_tin]->spe != 1) {
+    if (!(u.utracked[tos_tin]->spe & OPM_SPINACH)) {
         if (u.utracked[tos_tin]->corpsenm == NON_PM) {
             pline(msgc_noconsequence, "It turns out to be empty.");
             u.utracked[tos_tin]->dknown = u.utracked[tos_tin]->known = TRUE;
@@ -832,13 +836,13 @@ eat_tin_one_turn(void)
             goto use_me;
         }
         r = u.utracked[tos_tin]->cursed ? ROTTEN_TIN : /* cursed => rotten */
-            (u.utracked[tos_tin]->spe == -1) ? HOMEMADE_TIN :  /* player-made */
+            (u.utracked[tos_tin]->spe & OPM_HOMEMADE) ? HOMEMADE_TIN : /* player-made */
             rn2(TTSZ - 1);      /* else take your pick */
         if (r == ROTTEN_TIN &&
             (u.utracked[tos_tin]->corpsenm == PM_LIZARD ||
              u.utracked[tos_tin]->corpsenm == PM_LICHEN))
             r = HOMEMADE_TIN;   /* lizards don't rot */
-        else if (u.utracked[tos_tin]->spe == -1 &&
+        else if ((u.utracked[tos_tin]->spe & OPM_HOMEMADE) &&
                  !u.utracked[tos_tin]->blessed && !rn2(7))
             r = ROTTEN_TIN;     /* some homemade tins go bad */
         which = 0;      /* 0=>plural, 1=>as-is, 2=>"the" prefix */
@@ -852,7 +856,7 @@ eat_tin_one_turn(void)
             else
                 which = monnam_is_pname(idx) ? 1 : 0;
         } else {
-            what = mons[u.utracked[tos_tin]->corpsenm].mname;
+            what = opm_name(u.utracked[tos_tin]);
             if (mons[u.utracked[tos_tin]->corpsenm].geno & G_UNIQ)
                 which =
                     type_is_pname(&mons[u.utracked[tos_tin]->corpsenm]) ? 1 : 2;
@@ -873,7 +877,7 @@ eat_tin_one_turn(void)
         u.utracked[tos_food] = NULL;
 
         pline(msgc_actionok, "You consume %s %s.", tintxts[r].txt,
-              mons[u.utracked[tos_tin]->corpsenm].mname);
+              opm_name(u.utracked[tos_tin]));
 
         /* KMH, conduct */
         break_conduct(conduct_food);
@@ -1132,7 +1136,7 @@ eatcorpse(struct monst *mon, struct obj *otmp)
             else
                 buf = msgprintf("the rotted corpse of %s%s",
                                 !type_is_pname(&mons[mnum]) ? "the " : "",
-                                mons[mnum].mname);
+                                opm_name(otmp));
             make_sick(mon, sick_time, buf, TRUE, SICK_VOMITABLE);
         }
         if (mcarried(otmp))
@@ -1142,16 +1146,21 @@ eatcorpse(struct monst *mon, struct obj *otmp)
         else
             useupf(otmp, 1L);
         return 2;
-    } else if (acidic(&mons[mnum]) && !Acid_resistance) {
+    } else if (acidic(&mons[mnum]) && !immune_to_acid(mon)) {
         tp++;
+
+        /* not body_part() */
         if (you || vis)
             pline(you ? msgc_badidea : msgc_monneutral,
-                  "%s %s a very bad case of stomach acid.",
-                  you ? "You" : Monnam(mon),
-                  you ? "have" : "has");
-        /* not body_part() */
+                  "%s a %sbad case of stomach acid.", M_verbs(mon, "have"),
+                  resists_acid(mon) ? "" : "very ");
+
+        int dmg = rnd(15);
+        if (resists_acid(mon))
+            dmg = (dmg + 1) / 2;
+
         if (you)
-            losehp(rnd(15), killer_msg(DIED, "an acidic corpse"));
+            xlosehp(rnd(15), killer_msg(DIED, "an acidic corpse"), FALSE);
         else {
             mon->mhp -= rnd(15);
             if (mon->mhp <= 0) {
@@ -1166,12 +1175,14 @@ eatcorpse(struct monst *mon, struct obj *otmp)
         else if (vis)
             pline(msgc_monneutral, "%s was poisoned by %s meal!",
                   Monnam(mon), mhis(mon));
-        if (!resists_poison(mon)) {
+        if (!immune_to_poison(mon)) {
             if (you) {
-                losestr(rnd(4), DIED, killer_msg(DIED, "a poisonous corpse"), NULL);
-                losehp(rnd(15), killer_msg(DIED, "a poisonous corpse"));
+                losestr(resists_poison(mon) ? 1 : rnd(4), DIED,
+                        killer_msg(DIED, "a poisonous corpse"), NULL);
+                xlosehp(resists_poison(mon) ? rnd(5) : rnd(15),
+                        killer_msg(DIED, "a poisonous corpse"), FALSE);
             } else {
-                mon->mhp -= rnd(15);
+                mon->mhp -= resists_poison(mon) ? rnd(5) : rnd(15);
                 if (mon->mhp <= 0) {
                     mondied(mon);
                     retcode = 2;
@@ -1187,12 +1198,10 @@ eatcorpse(struct monst *mon, struct obj *otmp)
         tp++;
         if (you || vis)
             pline(you ? msgc_statusbad : msgc_monneutral,
-                  "%s %s %ssick.",
-                  you ? "You" : Monnam(mon),
-                  you ? "feel" : "looks",
+                  "%s %s %ssick.", Monnam(mon), mfeel(mon),
                   (sick(mon)) ? "very " : "");
         if (you)
-            losehp(rnd(8), killer_msg(DIED, "a cadaver"));
+            xlosehp(rnd(8), killer_msg(DIED, "a cadaver"), FALSE);
         else {
             mon->mhp -= rnd(8);
             if (mon->mhp <= 0) {
@@ -1395,6 +1404,9 @@ eataccessory(struct monst *mon, struct obj *otmp)
             /* disallow conflict for monsters */
             if (typ == RIN_CONFLICT && !you)
                 break;
+
+            if (typ == AMULET_OF_RESTFUL_SLEEP)
+                set_property(mon, SLEEP_RES, 0, FALSE); /* give this too */
 
             if (set_property(mon, objects[typ].oc_oprop, 0, FALSE))
                 accessory_has_effect(mon, otmp);
@@ -1728,7 +1740,7 @@ edibility_prompts(struct obj *otmp)
         else
             return 2;
     }
-    if (cadaver && poisonous(&mons[mnum]) && !Poison_resistance) {
+    if (cadaver && poisonous(&mons[mnum]) && !immune_to_poison(&youmonst)) {
         /* poisonous */
         buf = msgprintf("%s like %s might be poisonous! %s", foodsmell,
                         it_or_they, eat_it_anyway);
@@ -1747,7 +1759,9 @@ edibility_prompts(struct obj *otmp)
             return 2;
     }
     /* HP check is needed to stop this being annoying */
-    if (cadaver && acidic(&mons[mnum]) && !Acid_resistance && u.uhp < 20) {
+    if (cadaver && acidic(&mons[mnum]) &&
+        ((!resists_acid(&youmonst) && u.uhp < 20) ||
+         (!immune_to_acid(&youmonst) && u.uhp < 10))) {
         buf = msgprintf("%s rather acidic, and you're low on health. %s",
                         foodsmell, eat_it_anyway);
         if (yn_function(buf, ynchars, 'n') == 'n')
@@ -1857,7 +1871,8 @@ doeat(const struct nh_cmd_arg *arg)
         pline(msgc_statusbad, "Ulch!  That %s was rustproofed!", xname(otmp));
         /* The regurgitated object's rustproofing is gone now */
         otmp->oerodeproof = 0;
-        inc_timeout(&youmonst, STUNNED, rn2(10), FALSE);
+        if (!resists_stun(&youmonst))
+            inc_timeout(&youmonst, STUNNED, rn2(10), FALSE);
         pline(msgc_consequence, "You spit %s out onto the %s.",
               the(xname(otmp)),
               surface(u.ux, u.uy));
@@ -1914,10 +1929,12 @@ doeat(const struct nh_cmd_arg *arg)
             rottenfood(otmp);
 
         if (otmp->oclass == WEAPON_CLASS && otmp->opoisoned) {
-            if (!Poison_resistance) {
+            if (!immune_to_poison(&youmonst)) {
                 pline(msgc_intrloss, "Ecch - that must have been poisonous!");
-                losestr(rnd(4), DIED, killer_msg_obj(DIED, otmp), NULL);
-                losehp(rnd(15), killer_msg_obj(DIED, otmp));
+                losestr(resists_poison(&youmonst) ? 1 : rnd(4), DIED,
+                        killer_msg_obj(DIED, otmp), NULL);
+                xlosehp(resists_poison(&youmonst) ? rnd(5) : rnd(15),
+                        killer_msg_obj(DIED, otmp), FALSE);
             } else /* now a single message, as with the poisonous() check for
                       corpses, but a different one for ID knowledge reasons */
                 pline(msgc_playerimmune, "Was that thing poisoned?");

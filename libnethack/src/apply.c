@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-14 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-11 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -26,7 +26,7 @@ static int use_trap(struct obj *, const struct nh_cmd_arg *);
 static int use_stone(struct obj *);
 static int set_trap(void);      /* occupation callback */
 static int use_whip(struct obj *, const struct nh_cmd_arg *);
-static int use_pole(struct obj *, const struct nh_cmd_arg *);
+static boolean find_polearm_target(int, int, coord *);
 static int use_cream_pie(struct obj **);
 static int use_grapple(struct obj *, const struct nh_cmd_arg *);
 static boolean figurine_location_checks(struct obj *, coord *, boolean);
@@ -168,7 +168,7 @@ its_dead(int rx, int ry, int *resp)
         } else {
             ttmp = t_at(level, rx, ry);
             pline(msgc_yafm, "%s appears to be in %s health for a statue.",
-                  The(mons[otmp->corpsenm].mname),
+                  The(opm_name(otmp)),
                   (ttmp && ttmp->ttyp == STATUE_TRAP) ?
                   "extraordinary" : "excellent");
         }
@@ -326,7 +326,9 @@ use_magic_whistle(struct obj *obj)
     if (obj->cursed && !rn2(2)) {
         pline(msgc_substitute, "You produce a high-pitched humming noise.");
         wake_nearby(FALSE);
-    } else {
+    } else if (!obj->blessed && level->flags.noteleport)
+        pline(msgc_substitute, "But nothing happens.");
+    else {
         pline(msgc_actionok, whistle_str, Hallucination ? "normal" : "strange");
         for (mtmp = level->monlist; mtmp; mtmp = nextmon) {
             nextmon = mtmp->nmon;       /* trap might kill mon */
@@ -801,8 +803,13 @@ use_mirror(struct obj *obj, const struct nh_cmd_arg *arg)
                             pline(combat_msgc(hitby, hitmon, cr_immune),
                                   "%s isn't petrified.",
                                   Monnam(hitmon));
-                    } else
+                    } else if (!resists_ston(hitmon))
                         minstapetrify(&youmonst, hitmon);
+                    else { /* Medusa */
+                        pline(msgc_kill, "%s turned to stone!",
+                              M_verbs(hitmon, "are"));
+                        monstone(hitmon);
+                    }
                     /* not hitby -- that would credit hitby with the kill */
                     break;
                 }
@@ -831,8 +838,9 @@ use_mirror(struct obj *obj, const struct nh_cmd_arg *arg)
             if (!self)
                 continue; /* the rest of the things only affect self-reflects */
             if (!cancelled(hitmon) &&
-                (hitmon->data->mlet == S_NYMPH ||
-                 hitmon->data == &mons[PM_SUCCUBUS])) {
+                ((hitmon->data->mlet == S_NYMPH ||
+                  hitmon->data == &mons[PM_INCUBUS]) &&
+                 hitmon->female)) {
                 if (vis) {
                     pline(msgc_actionok, "%s admires herself in your %s.",
                           Monnam(hitmon), simple_typename(obj->otyp));
@@ -1640,15 +1648,15 @@ use_tinning_kit(struct obj *obj)
         && !resists_ston(&youmonst) && !uarmg) {
         if (poly_when_stoned(youmonst.data))
             pline(msgc_consequence, "You tin %s without wearing gloves.",
-                  an(mons[corpse->corpsenm].mname));
+                  an(opm_name(corpse)));
         else
             pline(msgc_badidea,
                   "Tinning %s without wearing gloves is a fatal mistake...",
-                  an(mons[corpse->corpsenm].mname));
+                  an(opm_name(corpse)));
 
         instapetrify(killer_msg(STONING,
                                 msgprintf("trying to tin %s without gloves",
-                                          an(mons[corpse->corpsenm].mname))));
+                                          an(opm_name(corpse)))));
     }
     if (is_rider(&mons[corpse->corpsenm])) {
         revive_corpse(corpse);
@@ -1670,7 +1678,8 @@ use_tinning_kit(struct obj *obj)
         can->blessed = obj->blessed;
         can->owt = weight(can);
         can->known = 1;
-        can->spe = -1;  /* Mark tinned tins. No spinach allowed... */
+        can->spe = corpse->spe;
+        can->spe |= OPM_HOMEMADE; /* Mark tinned tins. No spinach allowed... */
         if (carried(corpse)) {
             if (corpse->unpaid)
                 verbalize(msgc_unpaid, you_buy_it);
@@ -1721,7 +1730,10 @@ use_unicorn_horn(struct obj *obj)
             inc_timeout(&youmonst, CONFUSION, lcount, TRUE);
             break;
         case 3:
-            inc_timeout(&youmonst, STUNNED, lcount, FALSE);
+            if (!resists_stun(&youmonst))
+                inc_timeout(&youmonst, STUNNED, lcount, FALSE);
+            else
+                pline(msgc_failrandom, "Nothing seems to happen.");
             break;
         case 4:
             adjattrib(rn2(A_MAX), -1, FALSE);
@@ -1892,6 +1904,9 @@ fig_transform(void *arg, long timeout)
     cansee_spot = cansee(cc.x, cc.y);
     mtmp = make_familiar(&youmonst, figurine, cc.x, cc.y, TRUE);
     if (mtmp) {
+        if (!(mtmp->data->mflags2 & (M2_MALE | M2_FEMALE)))
+            mtmp->female = !!(figurine->spe & OPM_FEMALE);
+
         monnambuf = msgprintf("%s", an(m_monnam(mtmp)));
         switch (figurine->where) {
         case OBJ_INVENT:
@@ -2591,10 +2606,10 @@ use_whip(struct obj *obj, const struct nh_cmd_arg *arg)
                            information". */
                         pline(msgc_substitute,
                               "Snatching %s corpse is a fatal mistake.",
-                              an(mons[otmp->corpsenm].mname));
+                              an(opm_name(otmp)));
                         instapetrify(killer_msg(STONING,
                             msgprintf("snatching %s corpse",
-                                      an(mons[otmp->corpsenm].mname))));
+                                      an(opm_name(otmp)))));
                     }
                     hold_another_object(otmp, "You drop %s!", doname(otmp),
                                         NULL);
@@ -2640,6 +2655,34 @@ use_whip(struct obj *obj, const struct nh_cmd_arg *arg)
     return 1;
 }
 
+/* Choose an appropriate starting position for prompting */
+static boolean
+find_polearm_target(int minr, int maxr, coord *cc)
+{
+    struct monst *mon;
+
+    /* Fallback */
+    cc->x = u.ux;
+    cc->y = u.uy;
+
+    int x, y;
+    for (x = (u.ux - 2); x <= (u.ux + 2); x++) {
+        for (y = (u.uy - 2); y <= (u.uy + 2); y++) {
+            if (!isok(x, y) || distu(x, y) < minr || distu(x, y) > maxr ||
+                !couldsee(x, y))
+                continue;
+
+            mon = vismon_at(level, x, y);
+            if (mon && !mon->mpeaceful) {
+                cc->x = x;
+                cc->y = y;
+                return TRUE;
+            }
+        }
+    }
+
+    return FALSE;
+}
 
 static const char
      not_enough_room[] =
@@ -2649,13 +2692,13 @@ static const char
     "You can't reach that spot from here.";
 
 /* Distance attacks by pole-weapons */
-static int
+int
 use_pole(struct obj *obj, const struct nh_cmd_arg *arg)
 {
     int wtstatus, typ, max_range = 4, min_range = 4;
     coord cc;
     struct monst *mtmp;
-
+    boolean autofiring = last_command_was("fire");
 
     /* Are you allowed to use the pole? */
     if (Engulfed) {
@@ -2663,28 +2706,38 @@ use_pole(struct obj *obj, const struct nh_cmd_arg *arg)
         return 0;
     }
 
-    wtstatus = wield_tool(obj, "preparing to swing your polearm", occ_prepare, FALSE);
-
-    if (wtstatus & 2)
-        return 1;
-    if (!(wtstatus & 1))
-        return 0;
-
-    /* Prompt for a location */
-    pline(msgc_uiprompt, where_to_hit);
-    cc.x = u.ux;
-    cc.y = u.uy;
-    if (getargpos(arg, &cc, FALSE, "the spot to hit") == NHCR_CLIENT_CANCEL)
-        return 0;     /* user pressed ESC */
-
     /* Calculate range */
-    typ = weapon_type(uwep);
+    typ = weapon_type(obj);
     if (typ == P_NONE || P_SKILL(typ) <= P_BASIC)
         max_range = 4;
     else if (P_SKILL(typ) == P_SKILLED)
         max_range = 5;
     else
         max_range = 8;
+
+    /* See if we have an appropriate target to autofire */
+    if (autofiring && !find_polearm_target(min_range, max_range, &cc)) {
+        pline(msgc_cancelled,
+              "There doesn't seem to be an appropriate target to thrust.");
+        return 0;
+    }
+
+    wtstatus = wield_tool(obj, "preparing to swing your polearm", occ_prepare,
+                          autofiring);
+
+    if (wtstatus & 2)
+        return 1;
+    if (!(wtstatus & 1))
+        return 0;
+
+    if (!autofiring) {
+        /* Prompt for a location */
+        pline(msgc_uiprompt, where_to_hit);
+        find_polearm_target(min_range, max_range, &cc);
+        if (getargpos(arg, &cc, FALSE, "the spot to hit") == NHCR_CLIENT_CANCEL)
+            return 0;     /* user pressed ESC */
+    }
+
     if (distu(cc.x, cc.y) > max_range) {
         pline(distu(cc.x, cc.y) > 20 ? msgc_mispaste : msgc_cancelled,
               "Too far!");
@@ -2693,10 +2746,7 @@ use_pole(struct obj *obj, const struct nh_cmd_arg *arg)
         pline(msgc_cancelled, "Too close!");
         return 0;
     } else if (!cansee(cc.x, cc.y) &&
-               ((mtmp = m_at(level, cc.x, cc.y)) == NULL || !canseemon(mtmp))) {
-        /* TODO: The if condition above looks a little suspicious: it lets you
-           hit monsters you can see with infravision, but not monsters you can
-           see with telepathy. */
+               (mtmp = vismon_at(level, cc.x, cc.y)) == NULL) {
         pline(msgc_cancelled, cant_see_spot);
         return 0;
     } else if (!couldsee(cc.x, cc.y)) { /* Eyes of the Overworld */

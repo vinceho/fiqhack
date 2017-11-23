@@ -1,4 +1,4 @@
-# Last modified by Fredrik Ljungdahl, 2017-10-16
+# Last modified by Fredrik Ljungdahl, 2017-11-21
 # Copyright (c) Alex Smith, 2013.
 # NetHack may be freely redistributed.  See license for details.
 # FIQHack: aimake configuration.
@@ -26,6 +26,7 @@ $playfieldutils = qr/dlb|dgn_comp|lev_comp/;
                        # These warnings are probably worth fixing eventually,
                        # but have too many false positives to be able to show
                        # them right now
+                       '-Wno-implicit-fallthrough '.
                        '-Wno-unused-parameter -Wno-sign-compare '.
                        '-Wold-style-definition -Wstrict-prototypes '.
                        '-Wmissing-prototypes -Wmissing-declarations '.
@@ -99,7 +100,16 @@ $playfieldutils = qr/dlb|dgn_comp|lev_comp/;
             long_description => "Installs the tileset that traditionally ".
                                 "shipped with older versions of NetHack, ".
                                 "with enhancements from Slash'EM.",
-            object => qr=^path:tilesets/dat/catalogues/slashem-=,
+            object => qr=^path:tilesets/dat/catalogues/slashem-16=,
+            default => 1,
+            depends => 'gui',
+        },
+        slashem32_tiles => {
+            description => "Slash'EM 32px tileset",
+            long_description => "Installs a larger version of the tileset that ".
+                                "traditionally shipped with older versions of ".
+                                "NetHack, with enhancements from Slash'EM.",
+            object => qr=^path:tilesets/dat/catalogues/slashem-32=,
             default => 1,
             depends => 'gui',
         },
@@ -618,7 +628,12 @@ $playfieldutils = qr/dlb|dgn_comp|lev_comp/;
             install_feature => "dawnlike_tiles",
         },
         _install_slashem => {
-            object => qr{^bpath:tilesets/dat/merged/slashem-.*\.nh4ct$},
+            object => qr{^bpath:tilesets/dat/merged/slashem-16.*\.nh4ct$},
+            install_dir => "gamesdatadir",
+            install_feature => "slashem_tiles",
+        },
+        _install_slashem32 => {
+            object => qr{^bpath:tilesets/dat/merged/slashem-32.*\.nh4ct$},
             install_dir => "gamesdatadir",
             install_feature => "slashem_tiles",
         },

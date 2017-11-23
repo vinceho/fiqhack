@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-13 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-15 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -150,7 +150,6 @@ startup_common(boolean including_program_state)
     /* create mutable copies of object and artifact liss */
     init_objlist();
     init_artilist();
-    reset_rndmonst(NON_PM);
     free_dungeon();     /* clean up stray dungeon data */
 
     initoptions();
@@ -377,9 +376,14 @@ nh_play_game(int fd, enum nh_followmode followmode)
         return ERR_BAD_FILE;
     case LS_DONE:
         if (followmode != FM_REPLAY && followmode != FM_RECOVERQUIT) {
+#ifdef PUBLIC_SERVER
+            /* assume only one process at most, so this is safe */
+            followmode = FM_RECOVERQUIT;
+#else
             replay_forced = TRUE;
             followmode = FM_REPLAY; /* force into replay mode */
             file_done = TRUE;
+#endif
         }
         break;
     case LS_CRASHED:
@@ -1472,7 +1476,7 @@ newgame(microseconds birthday, struct newgame_options *ngo)
     flags.ident = FIRST_PERMANENT_IDENT; /* lower values are temporaries */
 
     for (i = 0; i < NUMMONS; i++)
-        mvitals[i].mvflags = mons[i].geno & G_NOCORPSE;
+        new_mvitals(i);
 
     flags.turntime = birthday;       /* get realtime right for level gen */
 
@@ -1487,6 +1491,7 @@ newgame(microseconds birthday, struct newgame_options *ngo)
     init_artifacts();
     u_init(birthday);   /* struct you must have some basic data for mklev to
                            work right */
+    mx_eyou_new(&youmonst); /* new player struct (mostly unused at the moment) */
     pantheon_init(TRUE);
 
     load_qtlist();      /* load up the quest text info */

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-15 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-08 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -96,7 +96,10 @@ enum pray_type {
     pty_anger,
     pty_conversion,
     pty_favour,
-    pty_smite_undead
+    pty_smite_undead,
+    pty_gift,
+    pty_mollified,
+    pty_reconciled,
 };
 
 enum pray_trouble {
@@ -240,6 +243,7 @@ struct flag {
     /* 1 bit values: booleans */
     boolean autodig;    /* MRKR: Automatically dig */
     boolean autodigdown;        /* autodigging works downwadrds */
+    boolean autounlock; /* unlock known-locked doors upon walking into them */
     boolean autoquiver; /* Automatically fill quiver */
     boolean autoswap; /* Automatically swap to/from launcher */
     boolean beginner;
@@ -283,10 +287,11 @@ struct flag {
 # define NEW_MOON       0
 # define FULL_MOON      4
     unsigned no_of_wizards;     /* 0, 1 or 2 (wizard and his shadow) */
+    boolean double_troubled; /* whether double trouble has been used this spawn */
     int pickup_burden;  /* maximum burden before prompt */
     int recently_broken_otyp;   /* object that broke recently */
     unsigned save_revision; /* save versioning to maintain save compatibility */
-# define SAVE_REVISION 9
+# define SAVE_REVISION 12
 
     /* Weird-sized structures */
     struct nh_autopickup_rules *ap_rules;

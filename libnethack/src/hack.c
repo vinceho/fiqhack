@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-14 */
+/* Last modified by Alex Smith, 2017-09-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -189,12 +189,13 @@ resolve_uim(enum u_interaction_mode uim, boolean weird_attack, xchar x, xchar y)
 
         if (!Levitation && !Flying && !is_clinger(youmonst.data) &&
             ((lava && waterwalk < 2) ||
-             (pool && !Swimming && !waterwalk)) &&
+             (pool && (!Swimming || waterproof(&youmonst)) && !waterwalk)) &&
             !(lava ? is_lava(level, u.ux, u.uy) : is_pool(level, u.ux, u.uy))) {
             if (cansee(x, y))
                 pline(msgc_cancelled,
-                      is_pool(level, x, y) ? "You never learned to swim!" :
-                      "That lava looks rather dangerous...");
+                      is_pool(level, x, y) ? "You never learned to %s!" :
+                      "That lava looks rather dangerous...",
+                      Swimming ? "remain waterproof" : "swim");
             else
                 pline(msgc_cancelled, "As far as you can remember, it's "
                       "not safe to stand there.");
@@ -232,7 +233,8 @@ resolve_uim(enum u_interaction_mode uim, boolean weird_attack, xchar x, xchar y)
        Another exception: if the door is /known/ to be locked. */
     if ((l->mem_bg == S_hcdoor || l->mem_bg == S_vcdoor) &&
         uim != uim_traditional &&
-        (!l->mem_door_l || (IS_DOOR(l->typ) && !(l->flags & D_LOCKED))))
+        (!l->mem_door_l || (IS_DOOR(l->typ) &&
+                            (!(l->flags & D_LOCKED) || flags.autounlock))))
         return uia_opendoor;
 
     /* This is an interactive mode (so autopicking up items is OK if autopickup
@@ -318,10 +320,7 @@ moverock(schar dx, schar dy)
 
         /* There's a boulder at (sx, sy), so make sure the point stays blocked.
            This should only happen where there's multiple boulders on a tile. */
-#ifdef INVISIBLE_OBJECTS
-        if (!otmp->oinvis)
-#endif
-            block_point(sx, sy);
+        block_point(sx, sy);
 
         /* make sure that this boulder is visible as the top object */
         if (otmp != level->objects[sx][sy])
@@ -743,6 +742,57 @@ bad_rock(const struct monst *mon, xchar x, xchar y)
                        && !(phasing(mon) && may_passwall(level, x, y))));
 }
 
+/* Returns TRUE if the monster can squeeze through a tight diagonal */
+boolean
+can_diagonal_squeeze(const struct monst *mon, boolean msg)
+{
+    if (!mon)
+        panic("can_diagonal_squeeze: mon is NULL");
+
+    boolean you = (mon == &youmonst);
+    enum msg_channel msgc = msgc_monneutral;
+    if (you)
+        msgc = msgc_cancelled;
+    if (!you && !canseemon(mon))
+        msg = FALSE;
+
+    if (In_sokoban(m_mz(mon))) {
+        if (msg)
+            pline(msgc, "%s cannot pass that way.", Monnam(mon));
+        return FALSE;
+    }
+
+    if (bigmonst(mon->data) && !can_ooze(mon)) {
+        if (msg)
+            pline(msgc, "%s body is too large to fit through.",
+                  s_suffix(Monnam(mon)));
+        return FALSE;
+    }
+
+    if (mon->minvent && minv_weight_total(mon) > 600) {
+        /* If we have grease (or oilskin) on our outermost armor piece,
+           we might be able to fit through anyway. */
+        struct obj *arm = which_armor(mon, os_armc);
+        if (!arm)
+            arm = which_armor(mon, os_arm);
+        if (!arm)
+            arm = which_armor(mon, os_armu);
+
+        if (arm && minv_weight_total(mon) <= 1200 &&
+            (arm->greased || arm->otyp == OILSKIN_CLOAK ||
+             (obj_properties(arm) & opm_oilskin)))
+            return TRUE; /* Should grease be able to wear off? */
+
+        /* otherwise we can't after all */
+        if (msg)
+            pline(msgc, "%s carrying too much to get through.",
+                  M_verbs(mon, "are"));
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 boolean
 invocation_pos(const d_level * dlev, xchar x, xchar y)
 {
@@ -888,25 +938,10 @@ test_move(int ux, int uy, int dx, int dy, int dz, int mode,
         }
     }
     if (dx && dy && bad_rock(&youmonst, ux, y) &&
-        bad_rock(&youmonst, x, uy)) {
-        /* Move at a diagonal. */
-        if (In_sokoban(&u.uz)) {
-            if (mode == DO_MOVE)
-                pline(msgc_cancelled, "You cannot pass that way.");
-            return FALSE;
-        }
-        if (bigmonst(youmonst.data) && !can_ooze(&youmonst)) {
-            if (mode == DO_MOVE)
-                pline(msgc_cancelled, "Your body is too large to fit through.");
-            return FALSE;
-        }
-        if (youmonst.minvent && (inv_weight_total() > 600)) {
-            if (mode == DO_MOVE)
-                pline(msgc_cancelled,
-                      "You are carrying too much to get through.");
-            return FALSE;
-        }
-    }
+        bad_rock(&youmonst, x, uy) &&
+        !can_diagonal_squeeze(&youmonst, (mode == DO_MOVE)))
+        return FALSE;
+
     /* Reduce our willingness to path through traps, water, and lava.  The
        character's current square is always safe to stand on, so don't worry
        about that. Check the character's memory, not the current square
@@ -1871,9 +1906,12 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
             }
         } else {
             /* Possibly unwield launcher for ammo unless we're using forcefight. */
-            if (flags.autoswap && uquiver && is_ammo(uquiver) &&
-                ammo_and_launcher(uquiver, uwep) &&
-                (!uswapwep || !ammo_and_launcher(uquiver, uswapwep)) &&
+            if (flags.autoswap && uwep &&
+                ((uquiver && is_ammo(uquiver) &&
+                  ammo_and_launcher(uquiver, uwep) &&
+                  (!uswapwep || !ammo_and_launcher(uquiver, uswapwep))) ||
+                 (!uquiver && is_pole(uwep) && !u.usteed &&
+                  (!uswapwep || !is_pole(uswapwep)))) &&
                 (!uwep->cursed || !uwep->bknown) &&
                 (!uswapwep || !uswapwep->cursed || !uswapwep->bknown))
                 doswapweapon(arg);
@@ -2159,7 +2197,7 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
      */
     if (uia == uia_displace && mtmp && !(m_mhiding(mtmp))) {
         /* if trapped, there's a chance the pet goes wild */
-        if (mtmp->mtrapped) {
+        if (mtmp->mtrapped && !mtmp->mpeaceful) {
             if (!rn2(mtmp->mtame)) {
                 mtmp->msleeping = 0;
                 msethostility(mtmp, TRUE, FALSE);
@@ -2214,15 +2252,31 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
             case 1:    /* trapped */
             case 3:    /* changed levels */
                 /* there's already been a trap message, reinforce it */
-                abuse_dog(mtmp);
-                adjalign(-3);
+                if (mtmp->mtame) {
+                    abuse_dog(mtmp);
+                    adjalign(-3);
+                } else {
+                    if (mtmp->dlevel == level)
+                        setmangry(mtmp);
+                    else {
+                        msethostility(mtmp, TRUE, FALSE);
+                        pline(msgc_alignbad,
+                              "It didn't seem very pleased about what you just did...");
+                        adjalign(-5);
+                    }
+                }
                 break;
             case 2:
                 /* it may have drowned or died.  that's no way to treat a pet!
                    your god gets angry. */
                 if (rn2(4)) {
-                    pline(msgc_alignbad,
-                          "You feel guilty about losing your pet like this.");
+                    if (mtmp->mtame)
+                        pline(msgc_alignbad,
+                              "You feel guilty about losing your pet like this.");
+                    else
+                        pline(msgc_alignbad,
+                              "You feel guilty about killing %s like this...",
+                              mon_nam(mtmp));
                     u.ugangr++;
                     adjalign(-15);
                 }
@@ -3138,6 +3192,15 @@ maybe_wail(void)
 void
 losehp(int n, const char *killer)
 {
+    xlosehp(n, killer, TRUE);
+}
+
+void
+xlosehp(int n, const char *killer, boolean interrupt)
+{
+    /* taking damage wakes you up if sleep resistant. */
+    if (resists_sleep(&youmonst))
+        cancel_helplessness(hm_asleep, "You wake up.");
     if (Upolyd) {
         u.mh -= n;
         if (u.mhmax < u.mh)
@@ -3152,7 +3215,7 @@ losehp(int n, const char *killer)
     u.uhp -= n;
     if (u.uhp > u.uhpmax)
         u.uhpmax = u.uhp;       /* perhaps n was negative */
-    else
+    else if (interrupt)
         action_interrupted(); /* taking damage stops command repeat */
     if (u.uhp < 1) {
         pline(msgc_fatal_predone, "You die...");
@@ -3207,15 +3270,21 @@ weight_cap(void)
 int
 inv_weight_total(void)
 {
-    struct obj *otmp = youmonst.minvent;
+    return minv_weight_total(&youmonst);
+}
+
+int
+minv_weight_total(const struct monst *mon)
+{
+    struct obj *obj = mon->minvent;
     int wt = 0;
 
-    while (otmp) {
-        if (otmp->oclass == COIN_CLASS)
-            wt += (int)(((long)otmp->quan + 50L) / 100L);
-        else if (otmp->otyp != BOULDER || !throws_rocks(youmonst.data))
-            wt += otmp->owt;
-        otmp = otmp->nobj;
+    while (obj) {
+        if (obj->oclass == COIN_CLASS)
+            wt += (int)(((long)obj->quan + 50L) / 100L);
+        else if (obj->otyp != BOULDER || !throws_rocks(mon->data))
+            wt += obj->owt;
+        obj = obj->nobj;
     }
     return wt;
 }

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Fredrik Ljungdahl, 2017-11-08 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -479,12 +479,38 @@ ghostfruit(struct obj *otmp)
 static void
 restore_mvitals(struct memfile *mf)
 {
-    int i;
+    int i, j;
 
+    j = 0;
     for (i = 0; i < NUMMONS; i++) {
-        mvitals[i].born = mread8(mf);
-        mvitals[i].died = mread8(mf);
-        mvitals[i].mvflags = mread8(mf);
+        while (is_removed_pm(j)) {
+            /* One or more monster ids vanished. This is the only case where
+               we handle removed permonsts at the moment. The reason is that
+               in other cases, we can safely revert to the monster right above
+               in the monster table (because the only removals were duplicates
+               due to female monster names), and this is the only part where
+               actual "permonst" (really mvitals, but similar) data is saved. */
+            mread8(mf);
+            mread8(mf);
+            mread8(mf);
+            j++;
+        }
+        if (is_new_pm(i))
+            new_mvitals(i);
+        else {
+            mvitals[i].born = mread8(mf);
+            mvitals[i].died = mread8(mf);
+            mvitals[i].mvflags = mread8(mf);
+        }
+        j++;
+    }
+
+    /* In case monsters was removed from the end */
+    while (is_removed_pm(j)) {
+        mread8(mf);
+        mread8(mf);
+        mread8(mf);
+        j++;
     }
 }
 
@@ -574,7 +600,15 @@ restgamestate(struct memfile *mf)
     mread(mf, flags.rngstate, sizeof flags.rngstate);
 
     restore_track(mf);
-    restore_rndmonst_state(mf);
+
+    /* old rndmonst data: no longer saved */
+    if (flags.save_revision < 11) {
+        int i = 347; /* was SPECIAL_PM + 4 */
+
+        while (i--)
+            mread8(mf);
+    }
+
     restore_history(mf);
 
     /* must come after all objs are restored */
@@ -650,11 +684,14 @@ restore_you(struct memfile *mf, struct you *y)
     y->urexp = mread32(mf);
     y->ulevelmax = mread32(mf);
     y->umonster = mread32(mf);
+    y->umonster += pm_offset(y->umonster);
     y->umonnum = mread32(mf);
+    y->umonnum += pm_offset(y->umonnum);
     y->mh = mread32(mf);
     y->mhmax = mread32(mf);
     y->mtimedone = mread32(mf);
     y->ulycn = mread32(mf);
+    y->ulycn += pm_offset(y->ulycn);
     y->utrap = save_decode_32(mread32(mf), -moves, -moves);
     y->utraptype = mread32(mf);
     y->uhunger = save_decode_32(mread32(mf), -moves, -moves);
@@ -681,6 +718,7 @@ restore_you(struct memfile *mf, struct you *y)
     y->urideturns = mread32(mf);
     y->umortality = mread32(mf);
     y->ugrave_arise = mread32(mf);
+    y->ugrave_arise += pm_offset(y->ugrave_arise);
     y->weapon_slots = mread32(mf);
     y->skills_advanced = mread32(mf);
     y->initrole = mread32(mf);
@@ -717,8 +755,13 @@ restore_you(struct memfile *mf, struct you *y)
     y->moveamt = mread8(mf);
     y->spellquiver = mread16(mf);
 
+    int lastprop = mread8(mf);
+    if (!lastprop)
+        lastprop = 69; /* old saves */
+    int ever_trinsic_size = (lastprop + 7) / 8;
+
     /* this is oddly placed due to save padding */
-    /*len = mread32(mf);
+    len = mread32(mf);
     if (len > 0) {
         char *buf = malloc(len + 1);
         mread(mf, buf, len);
@@ -726,15 +769,15 @@ restore_you(struct memfile *mf, struct you *y)
         y->delayed_killers.zombie = buf;
     } else {
         y->delayed_killers.zombie = NULL;
-        }*/
+    }
 
     /* Ignore the padding added in save.c */
-    for (i = 0; i < 509; i++)
+    for (i = 0; i < 504; i++)
         (void) mread8(mf);
 
-    mread(mf, y->ever_extrinsic, sizeof (y->ever_extrinsic));
-    mread(mf, y->ever_intrinsic, sizeof (y->ever_intrinsic));
-    mread(mf, y->ever_temporary, sizeof (y->ever_temporary));
+    mread(mf, y->ever_extrinsic, ever_trinsic_size);
+    mread(mf, y->ever_intrinsic, ever_trinsic_size);
+    mread(mf, y->ever_temporary, ever_trinsic_size);
     mread(mf, y->uwhybusy, sizeof (y->uwhybusy));
     mread(mf, y->urooms, sizeof (y->urooms));
     mread(mf, y->urooms0, sizeof (y->urooms0));
@@ -928,14 +971,20 @@ restore_flags(struct memfile *mf, struct flag *f)
                            "the game version.");
         return;
     }
+    f->polyinit_mnum += pm_offset(f->polyinit_mnum);
+    f->recently_broken_otyp += otyp_offset(f->recently_broken_otyp);
+
     f->servermail = mread8(mf);
     f->autoswap = mread8(mf);
 
     /* Seperate from other last_arg for save compat reasons */
     f->last_arg.key = mread32(mf);
 
+    f->double_troubled = mread8(mf);
+    f->autounlock = mread8(mf);
+
     /* Ignore the padding added in save.c */
-    for (i = 0; i < 99; i++)
+    for (i = 0; i < 97; i++)
         (void) mread8(mf);
 
     mread(mf, f->setseed, sizeof (f->setseed));
@@ -964,7 +1013,7 @@ dorecover(struct memfile *mf)
     int count;
     xchar ltmp;
     struct obj *otmp;
-    struct monst *mtmp;
+    struct monst *mon;
 
     int temp_pos;       /* in case we're both reading and writing the file */
 
@@ -989,12 +1038,17 @@ dorecover(struct memfile *mf)
     role_init();       /* Reset the initial role, race, gender, and alignment */
     pantheon_init(FALSE);
 
-    mtmp = restore_mon(mf, NULL, NULL);
-    if (mtmp->minvent)
+    mon = restore_mon(mf, NULL, NULL);
+    if (mon->minvent)
         restobjchn(mf, NULL, FALSE, FALSE,
-                   &(mtmp->minvent), NULL);
-    youmonst = *mtmp;
-    dealloc_monst(mtmp);
+                   &(mon->minvent), NULL);
+
+    if (flags.save_revision < 12)
+        mx_eyou_new(mon);
+
+    youmonst = *mon;
+    mx_copy(&youmonst, mon);
+    dealloc_monst(mon);
     set_uasmon();       /* fix up youmonst.data */
 
     if (flags.save_revision < 5) {
@@ -1043,7 +1097,9 @@ dorecover(struct memfile *mf)
        change the save file, something that the save code detects as a
        desync. Therefore, this is now the caller's job. */
 
-    /* Success! */
+    /* Success! Update whereis. */
+    update_whereis(TRUE);
+
     mf->pos = temp_pos;
     return 1;
 }

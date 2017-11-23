@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-14 */
+/* Last modified by Alex Smith, 2017-06-29 */
 /* Copyright (c) Izchak Miller, Mike Stephenson, Steve Linhart, 1989. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -968,10 +968,8 @@ dokick(const struct nh_cmd_arg *arg)
                 goto ouch;
             /* make metal boots rust */
             if (uarmf && rn2(3))
-                if (!water_damage(uarmf, "metal boots", TRUE)) {
-                    pline(msgc_badidea, "Your boots get wet.");
-                    /* could cause short-lived fumbling here */
-                }
+                water_damage(uarmf, "metal boots", TRUE);
+
             exercise(A_DEX, TRUE);
             return 1;
         }
@@ -1038,13 +1036,11 @@ dokick(const struct nh_cmd_arg *arg)
         }
         if (IS_SINK(maploc->typ)) {
             int gend = poly_gender();
-            short washerndx = (gend == 1 ||
-                               (gend == 2 &&
-                                rn2(2))) ? PM_INCUBUS : PM_SUCCUBUS;
 
             boolean pudding_available = !rn2_on_rng(3, rng_sink_kick);
             boolean dishwasher_available = !rn2_on_rng(3, rng_sink_kick);
             boolean ring_available = !rn2_on_rng(3, rng_sink_kick);
+            struct monst *sink_mon;
 
             if (Levitation)
                 goto dumb;
@@ -1076,12 +1072,18 @@ dokick(const struct nh_cmd_arg *arg)
                 }
                 return 1;
             } else if (!(maploc->flags & S_LDWASHER) && dishwasher_available) {
-                if (!(mvitals[washerndx].mvflags & G_GONE)) {
+                if (!(mvitals[PM_INCUBUS].mvflags & G_GONE)) {
                     /* can't resist... */
                     pline(msgc_levelwarning, "%s returns!",
                           (Blind ? "Something" : "The dish washer"));
-                    if (makemon(&mons[washerndx], level, x, y, NO_MM_FLAGS))
+                    sink_mon = makemon(&mons[PM_INCUBUS], level, x, y, NO_MM_FLAGS);
+                    if (sink_mon) {
+                        /* opposite-gendered */
+                        sink_mon->female = ((gend == 1 ||
+                                             (gend == 2 &&
+                                              rn2(2))) ? 1 : 0);
                         newsym(x, y);
+                    }
                     maploc->flags |= S_LDWASHER;
                     exercise(A_DEX, TRUE);
                 } else {
@@ -1521,9 +1523,7 @@ deliver_object(struct obj *obj, xchar dnum, xchar dlevel, int where)
     if (!lev) { /* this can go away if we pre-generate all levels */
         /* Reset the rndmonst state so that it will generate correct monsters
            for the level being created. */
-        reset_rndmonst(NON_PM);
         lev = mklev(&levnum);
-        reset_rndmonst(NON_PM);
     }
 
     obj_extract_self(obj);
@@ -1608,7 +1608,8 @@ down_gate(xchar x, xchar y)
         return MIGR_LADDER_UP;
     }
 
-    if (((ttmp = t_at(level, x, y)) != 0 && ttmp->tseen) &&
+    if (((ttmp = t_at(level, x, y)) != 0 &&
+         (ttmp->tseen || !cansee(x, y))) &&
         (ttmp->ttyp == TRAPDOOR || ttmp->ttyp == HOLE)) {
         gate_str =
             (ttmp->ttyp ==

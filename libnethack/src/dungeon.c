@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-10-16 */
+/* Last modified by Fredrik Ljungdahl, 2017-10-29 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -1891,12 +1891,19 @@ overview_scan(const struct level *lev, struct overview_info *oi)
                 break;
 
             case S_altar:
-                if (lev->locations[x][y].flags & AM_SANCTUM) {
+                /* old saves before altar colors */
+                oi->altars++;
+                break;
+            case S_aaltar:
+                oi->high_altars++;
+                break;
+            case S_laltar:
+            case S_naltar:
+            case S_caltar:
+            case S_ualtar:
+                if (lev->locations[x][y].flags & AM_SANCTUM)
                     oi->high_altars++;
-                    /* Don't count high altars as altars to avoid leaking
-                       alignment information. */
-                    break;
-                }
+
                 oi->altars++;
                 /* Check altar's alignment. */
                 if (lev->locations[x][y].flags & AM_LAWFUL)
@@ -2224,6 +2231,8 @@ dooverview(const struct nh_cmd_arg *arg)
         return 0;
 
     /* set the display buffer from the remembered */
+    struct level *old_level = level;
+    level = lev;
     for (y = 0; y < ROWNO; y++)
         for (x = 0; x < COLNO; x++)
             dbuf_set_memory(lev, x, y);
@@ -2234,6 +2243,7 @@ dooverview(const struct nh_cmd_arg *arg)
     notify_levelchange(&lev->z);
     flush_screen_nopos();
     look_at_map(u.ux, u.uy);
+    level = old_level;
     notify_levelchange(NULL);
     doredraw();
 
