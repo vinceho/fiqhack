@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-08 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-13 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -310,8 +310,6 @@ restobjchn(struct memfile *mf, struct level *lev, boolean ghostly,
             for (otmp3 = otmp->cobj; otmp3; otmp3 = otmp3->nobj)
                 otmp3->ocontainer = otmp;
         }
-        if (otmp->bypass)
-            otmp->bypass = 0;
     }
 }
 
@@ -638,6 +636,24 @@ restgamestate(struct memfile *mf)
     }
 }
 
+static void
+fixstr(struct attribs *attr)
+{
+    /* A_STR was 0 at this point */
+    if (flags.save_revision >= 15 ||
+        attr->a[0] <= 18)
+        return;
+
+    if (attr->a[0] <= 68)
+        attr->a[0] = 19;
+    else if (attr->a[0] <= 103)
+        attr->a[0] = 20;
+    else if (attr->a[0] <= 121)
+        attr->a[0] = 21;
+    else
+        attr->a[0] -= 100;
+}
+
 void
 restore_you(struct memfile *mf, struct you *y)
 {
@@ -787,12 +803,19 @@ restore_you(struct memfile *mf, struct you *y)
     mread(mf, y->ushops_entered, sizeof (y->ushops_entered));
     mread(mf, y->ushops_left, sizeof (y->ushops_left));
     mread(mf, y->macurr.a, sizeof (y->macurr.a));
+    fixstr(&y->macurr);
     mread(mf, y->mamax.a, sizeof (y->mamax.a));
+    fixstr(&y->mamax);
     mread(mf, y->acurr.a, sizeof (y->acurr.a));
+    fixstr(&y->acurr);
     mread(mf, y->aexe.a, sizeof (y->aexe.a));
+    /* exercise already handles strength like other things */
     mread(mf, y->amax.a, sizeof (y->amax.a));
+    fixstr(&y->amax);
     mread(mf, y->atemp.a, sizeof (y->atemp.a));
+    fixstr(&y->atemp);
     mread(mf, y->atime.a, sizeof (y->atime.a));
+    fixstr(&y->atime);
     mread(mf, y->skill_record, sizeof (y->skill_record));
     mread(mf, y->uplname, sizeof (y->uplname));
 
@@ -1032,7 +1055,6 @@ dorecover(struct memfile *mf)
     level = NULL;       /* level restore must not use this pointer */
 
     restore_flags(mf, &flags);
-    flags.bypasses = 0; /* never use a saved value of bypasses */
 
     restore_you(mf, &u);
     role_init();       /* Reset the initial role, race, gender, and alignment */
@@ -1359,6 +1381,8 @@ getlev(struct memfile *mf, xchar levnum, boolean ghostly)
     restore_dest_area(mf, &lev->dndest);
 
     lflags = mread32(mf);
+    if (flags.save_revision < 13)
+        lflags &= ~((lflags >> 13) & 1); /* old forgotten flag */
     lev->flags.vault_known = (lflags >> 23) & 1;
     lev->flags.noteleport = (lflags >> 22) & 1;
     lev->flags.hardfloor = (lflags >> 21) & 1;
@@ -1369,7 +1393,6 @@ getlev(struct memfile *mf, xchar levnum, boolean ghostly)
     lev->flags.is_maze_lev = (lflags >> 16) & 1;
     lev->flags.is_cavernous_lev = (lflags >> 15) & 1;
     lev->flags.arboreal = (lflags >> 14) & 1;
-    lev->flags.forgotten = (lflags >> 13) & 1;
 
     restore_coords(mf, lev->doors, DOORMAX);
     rest_rooms(mf, lev);        /* No joke :-) */

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-08 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -1274,7 +1274,8 @@ artifact_hit_drainlife(struct monst *magr, struct monst *mdef, struct obj *otmp,
             pline(msgc, "The %s blade drains your life!", hcolor("black"));
         else
             pline(msgc, "%s drains your life!", The(distant_name(otmp, xname)));
-        losexp(msgcat("drained of life by ", artiname(otmp->oartifact)), FALSE);
+        losexp(msgcat("drained of life by ", otmp->oartifact ?
+                      artiname(otmp->oartifact) : "a thirsty weapon"), FALSE);
         if (magr && magr->mhp < magr->mhpmax) {
             magr->mhp += (oldhpmax - u.uhpmax) / 2;
             if (magr->mhp > magr->mhpmax)
@@ -1319,7 +1320,7 @@ artifact_hit(struct monst *magr, struct monst *mdef, struct obj *otmp,
                    (mdef && canseemon(mdef)));
     boolean res = FALSE;
     const char *hittee = mon_nam(mdef);
-    int spec_dbon_applies = FALSE;
+    int spec_dbon_applies = 0;
 
     /* The following takes care of most of the damage, but not all-- the
        exception being for level draining, which is specially handled. Messages 

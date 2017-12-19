@@ -1,9 +1,10 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-07 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
 #include "hack.h"
+#include "artilist.h"
 #include "prop.h"
 
 #include <limits.h>
@@ -1083,6 +1084,13 @@ weight(struct obj *obj)
 {
     int wt = objects[obj->otyp].oc_weight;
 
+
+    if (obj->oartifact) {
+        const struct artifact *arti = &artilist[obj->oartifact];
+        if (arti && (arti->spfx & SPFX_WTREDUC))
+            wt = (wt + 1) / 2;
+    }
+
     if (obj->otyp == LARGE_BOX && obj->spe == 1)        /* Schroedinger's Cat */
         wt += mons[PM_HOUSECAT].cwt;
     if (Is_container(obj) || obj->otyp == STATUE) {
@@ -1800,14 +1808,14 @@ restore_obj(struct memfile *mf)
     otmp->owt = mread32(mf);
     otmp->quan = mread32(mf);
     otmp->corpsenm = mread32(mf);
-    if (corpsenm_is_relevant(otmp->otyp))
-        otmp->corpsenm += pm_offset(otmp->corpsenm);
     otmp->oeaten = mread32(mf);
     otmp->age = mread32(mf);
     otmp->owornmask = mread32(mf);
     oflags = mread32(mf);
 
     otmp->otyp = mread16(mf);
+    if (corpsenm_is_relevant(otmp->otyp))
+        otmp->corpsenm += pm_offset(otmp->corpsenm);
 
     otmp->otyp += otyp_offset(otmp->otyp);
 
@@ -1826,10 +1834,11 @@ restore_obj(struct memfile *mf)
         otmp->oprops = mread64(mf);
         otmp->oprops_known = mread64(mf);
         otmp->mem_o_id = mread32(mf);
+        otmp->thrown_time = mread32(mf);
         int i;
 
         /* Reserved for future extensions */
-        for (i = 0; i < 196; i++)
+        for (i = 0; i < 192; i++)
             (void) mread8(mf);
     }
 
@@ -1853,7 +1862,7 @@ restore_obj(struct memfile *mf)
     int oattached = (oflags >> 9) & 3; /* old saves */
     otmp->in_use = (oflags >> 8) & 1;
     otmp->was_thrown = (oflags >> 7) & 1;
-    otmp->bypass = (oflags >> 6) & 1;
+    /* old bypass flag */
     otmp->was_dropped = (oflags >> 5) & 1;
     otmp->mknown = (oflags >> 4) & 1;
     otmp->mbknown = (oflags >> 3) & 1;
@@ -1906,6 +1915,12 @@ restore_obj(struct memfile *mf)
                 otmp->spe |= ((mons[otmp->corpsenm].mflags2 & M2_FEMALE) ?
                               OPM_FEMALE : OPM_MALE);
         }
+    } else if (flags.save_revision < 14 && otmp->memory &&
+               otmp->corpsenm == -1 &&
+               (otmp->otyp == STATUE || otmp->otyp == TIN ||
+                otmp->otyp == FIGURINE || otmp->otyp == EGG)) {
+        /* Hotfix for mimic object memories */
+        otmp->corpsenm = PM_TENGU;
     }
     return otmp;
 }
@@ -1921,6 +1936,9 @@ save_obj(struct memfile *mf, struct obj *obj)
         return;
     }
 
+    if (obj->to_be_hit) /* Not saved, so not a major issue, but this shouldn't happen */
+        impossible("obj->to_be_hit was set in neutral turnstate?");
+
     oflags =
         (obj->cursed << 31) | (obj->blessed << 30) |
         (obj->unpaid << 29) | (obj->no_charge << 28) |
@@ -1932,7 +1950,7 @@ save_obj(struct memfile *mf, struct obj *obj)
         (obj->recharged << 13) | (obj->lamplit << 12) |
         (obj->greased << 11) | (OATTACHED_NEW << 9) |
         (obj->in_use << 8) | (obj->was_thrown << 7) |
-        (obj->bypass << 6) | (obj->was_dropped << 5) |
+        (0 << 6 /* old bypass */ ) | (obj->was_dropped << 5) |
         (obj->mknown << 4) | (obj->mbknown << 3) |
         (obj->memory << 1) | (obj->cknown << 0);
 
@@ -1974,10 +1992,11 @@ save_obj(struct memfile *mf, struct obj *obj)
     if (obj->mem_obj)
         obj->mem_o_id = obj->mem_obj->o_id;
     mwrite32(mf, obj->mem_o_id);
+    mwrite32(mf, obj->thrown_time);
 
     /* Reserved for future extensions */
     int i;
-    for (i = 0; i < 196; i++)
+    for (i = 0; i < 192; i++)
         mwrite8(mf, 0);
 
     mwrite32(mf, obj->m_id);

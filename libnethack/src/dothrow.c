@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Alex Smith, 2017-06-29 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -17,7 +17,6 @@ static void breakobj(struct obj *, xchar, xchar, boolean, boolean);
 static void breakmsg(struct obj *, boolean);
 static boolean toss_up(struct obj *, boolean);
 static void sho_obj_return_to_u(struct obj *obj, schar, schar);
-static boolean mhurtle_step(void *, int, int);
 
 
 static const char toss_objs[] =
@@ -73,7 +72,7 @@ throw_obj(struct obj *obj, const struct nh_cmd_arg *arg,
               The(xname(obj)));
         return 0;
     }
-    if ((obj->oartifact == ART_MJOLLNIR && ACURR(A_STR) < STR19(25))
+    if ((obj->oartifact == ART_MJOLLNIR && ACURR(A_STR) < 25)
         || (obj->otyp == BOULDER && !throws_rocks(youmonst.data))) {
         pline(msgc_cancelled1, "It's too heavy.");
         return 1;
@@ -289,7 +288,7 @@ dofire(const struct nh_cmd_arg *arg)
             ;
 
         if (sp_no < MAXSPELL && spl_book[sp_no].sp_id == u.spellquiver &&
-            spellknow(sp_no) > 0) {
+            spellknow(sp_no)) {
             m.spell = u.spellquiver;
             return spelleffects(FALSE, &m);
         }
@@ -615,23 +614,35 @@ hurtle_step(void *arg, int x, int y)
     return TRUE;
 }
 
-static boolean
+boolean
+mhurtle_step_ok(void *arg, int x, int y)
+{
+    struct monst *mon = arg;
+    if (!goodpos(level, x, y, mon, 0) || !m_in_out_region(mon, x, y))
+        return FALSE;
+    return TRUE;
+}
+
+boolean
 mhurtle_step(void *arg, int x, int y)
 {
-    struct monst *mon = (struct monst *)arg;
+    if (!mhurtle_step_ok(arg, x, y))
+        return FALSE;
+    struct monst *mon = arg;
 
     /* TODO: Treat walls, doors, iron bars, pools, lava, etc. specially rather
        than just stopping before. */
-    if (goodpos(level, x, y, mon, 0) && m_in_out_region(mon, x, y)) {
-        remove_monster(level, mon->mx, mon->my);
-        newsym(mon->mx, mon->my);
-        place_monster(mon, x, y, TRUE);
-        newsym(mon->mx, mon->my);
-        set_apparxy(mon);
-        mintrap(mon);
-        return TRUE;
-    }
-    return FALSE;
+    int ox = mon->mx;
+    int oy = mon->my;
+    remove_monster(level, mon->mx, mon->my);
+    newsym(mon->mx, mon->my);
+    place_monster(mon, x, y, TRUE);
+    newsym(x, y);
+    set_apparxy(mon);
+    flush_screen();
+    if (cansee(ox, oy) && cansee(x, y))
+        win_delay_output();
+    return TRUE;
 }
 
 /*
@@ -706,7 +717,7 @@ mhurtle(struct monst *mon, int dx, int dy, int range)
     if (!mon->mfrozen)
         mon->mfrozen = 1;
 
-    /* Is the monster stuck or too heavy to push? (very large monsters have too 
+    /* Is the monster stuck or too heavy to push? (very large monsters have too
        much inertia, even floaters and flyers) */
     if (mon->data->msize >= MZ_HUGE || mon == u.ustuck || mon->mtrapped)
         return;
@@ -723,6 +734,7 @@ mhurtle(struct monst *mon, int dx, int dy, int range)
     cc.x = mon->mx + (dx * range);
     cc.y = mon->my + (dy * range);
     walk_path(&mc, &cc, mhurtle_step, mon);
+    mintrap(mon);
     return;
 }
 
@@ -830,7 +842,7 @@ toss_up(struct obj *obj, boolean hitsroof)
         boolean less_damage = uarmh && is_metallic(uarmh), artimsg = FALSE;
         int dmg = dmgval(obj, &youmonst);
 
-        if (obj->oartifact)
+        if (obj->oartifact || obj->oprops)
             /* need a fake die roll here; rn1(18,2) avoids 1 and 20 */
             artimsg = artifact_hit(NULL, &youmonst, obj, &dmg, rn1(18, 2));
 
@@ -1208,7 +1220,7 @@ throwit(struct obj *obj, struct obj *stack,
     } else {
         boolean obj_destroyed;
 
-        urange = (int)(ACURRSTR) / 2;
+        urange = (int)(ACURR(A_STR)) / 2;
         /* balls are easy to throw or at least roll */
         /* also, this insures the maximum range of a ball is greater than 1, so 
            the effects from throwing attached balls are actually possible */
@@ -1566,6 +1578,7 @@ thitmonst(struct monst *mon, struct obj *obj, struct obj *stack)
         /* thrown item at intelligent pet to let it use it */
         pline(msgc_actionok, "%s %s.",
               M_verbs(mon, "catch"), the(xname(obj)));
+        obj->thrown_time = moves;
         obj_extract_self(obj);
         mpickobj(mon, obj, NULL);
         if (attacktype(mon->data, AT_WEAP) &&
@@ -2072,7 +2085,7 @@ throw_gold(struct obj *obj, schar dx, schar dy, schar dz)
         bhitpos.y = u.uy;
     } else {
         /* consistent with range for normal objects */
-        range = (int)((ACURRSTR) / 2 - obj->owt / 40);
+        range = (int)((ACURR(A_STR)) / 2 - obj->owt / 40);
 
         /* see if the gold has a place to move into */
         odx = u.ux + dx;

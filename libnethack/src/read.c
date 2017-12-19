@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-11 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -2385,13 +2385,10 @@ do_genocide(struct monst *mon, int how, boolean known_cursed)
         kill_genocided_monsters();
 
         if (killplayer) {
-            u.uhp = -1;
-            if (Upolyd)
-                u.mh = -1;
-
             const char *killer;
             if (!you)
-                killer = killer_msg(GENOCIDED, "a monster's scroll of genocide");
+                killer = killer_msg(GENOCIDED,
+                                    "a monster's scroll of genocide");
             else if (how & PLAYER)
                 killer = killer_msg(GENOCIDED, "genocidal confusion");
             else if (how & ONTHRONE)
@@ -2400,8 +2397,8 @@ do_genocide(struct monst *mon, int how, boolean known_cursed)
             else if (you)   /* selected player deliberately, not confused */
                 killer = killer_msg(GENOCIDED, "a scroll of genocide");
 
-            /* Polymorphed characters will die as soon as they're rehumanized. */
-            /* KMH -- Unchanging prevents rehumanization */
+            /* Polymorphed characters will die as soon as they're rehumanized.
+               KMH -- Unchanging prevents rehumanization */
             if (Upolyd && ptr != youmonst.data) {
                 pline(msgc_fatal, "You feel dead inside.");
                 set_delayed_killer(GENOCIDED, killer);
@@ -2509,7 +2506,7 @@ mon_choose_genocide(struct monst *mon, boolean class, int cur_try)
 
     /* hostile monsters it can see */
     struct monst *mtmp;
-    for (mtmp = mon->dlevel->monlist; mtmp; mtmp = monnext(mtmp)) {
+    for (mtmp = monlist(mon->dlevel); mtmp; mtmp = monnext(mtmp)) {
         /* do not genocide own kind */
         if (monsndx(mon->data) == monsndx(mtmp->data))
             continue;
@@ -2522,7 +2519,7 @@ mon_choose_genocide(struct monst *mon, boolean class, int cur_try)
     }
 
     /* hostile monsters it can sense */
-    for (mtmp = mon->dlevel->monlist; mtmp; mtmp = monnext(mtmp)) {
+    for (mtmp = monlist(mon->dlevel); mtmp; mtmp = monnext(mtmp)) {
         if (monsndx(mon->data) == monsndx(mtmp->data))
             continue;
         if (class && mon->data->mlet == mtmp->data->mlet)
@@ -2595,10 +2592,9 @@ unpunish(void)
 boolean
 cant_create(int *mtype, boolean revival)
 {
-
     /* SHOPKEEPERS can be revived now */
     if (*mtype == PM_GUARD || (*mtype == PM_SHOPKEEPER && !revival)
-        || *mtype == PM_ALIGNED_PRIEST /* || *mtype==PM_ANGEL */ ) {
+        || *mtype == PM_ALIGNED_PRIEST || *mtype == PM_HIGH_PRIEST) {
         *mtype = PM_HUMAN_ZOMBIE;
         return TRUE;
     } else if (*mtype == PM_LONG_WORM_TAIL) {   /* for create_particular() */
@@ -2699,7 +2695,7 @@ create_particular(const struct nh_cmd_arg *arg)
                 break;
             bufp += l;
         }
-            
+
         /* decide whether a valid monster was chosen */
         if (strlen(bufp) == 1) {
             monclass = def_char_to_monclass(*bufp);

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-07 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -74,10 +74,11 @@ struct obj {
 # define OPM_YOULAID  0x01 /* eggs only */
 # define OPM_MALE     0x02
 # define OPM_FEMALE   0x04
+# define OPM_NEUTER   0x06
 # define OPM_HOMEMADE 0x08 /* tins only */
     char oclass;                /* object class */
     char invlet;                /* designation in inventory */
-    char oartifact;             /* artifact array index */
+    unsigned char oartifact;    /* artifact array index */
 
     xchar where;                /* where the object thinks it is */
     xchar timed;                /* # of fuses (timers) attached to this obj */
@@ -118,7 +119,7 @@ struct obj {
     unsigned in_use:1;          /* for magic items before useup items */
     unsigned was_thrown:1;      /* thrown by the hero since last picked up */
     unsigned was_dropped:1;     /* last left inventory via d or D command */
-    unsigned bypass:1;  /* mark this as an object to be skipped by bhito() */
+    unsigned to_be_hit:1;       /* to be hit by bhitpile */
     unsigned memory:2;  /* object memory state */
 # define OM_NO_MEMORY   0 /* not an object memory */
 # define OM_MEMORY_OK   1 /* memory state is OK as far as we know */
@@ -133,6 +134,7 @@ struct obj {
         int lastused;           /* last time a tool was used */
     };
     unsigned oeaten;            /* nutrition left in food, if partly eaten */
+    int thrown_time;            /* when an item was thrown to a pet */
 
     int age;                    /* creation date */
     int owornmask;

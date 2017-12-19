@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Alex Smith, 2016-06-14 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-15 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -104,7 +104,7 @@ onscary(int x, int y, const struct monst *mtmp)
     if (mx_eshk(mtmp) || mx_egd(mtmp) || mtmp->iswiz || blind(mtmp) ||
         mtmp->mpeaceful || mtmp->data->mlet == S_HUMAN || is_lminion(mtmp) ||
         mtmp->data == &mons[PM_ANGEL] || is_rider(mtmp->data) ||
-        mtmp->data == &mons[PM_MINOTAUR])
+        (mtmp->data->geno & G_UNIQ))
         return FALSE;
 
     return (boolean) (sobj_at(SCR_SCARE_MONSTER, level, x, y)
@@ -729,7 +729,7 @@ m_move(struct monst *mtmp, int after)
     boolean avoid = FALSE;
     const struct permonst *ptr;
     schar mmoved = 0;   /* not strictly nec.: chi >= 0 will do */
-    long info[9];
+    long info[ROWNO * COLNO];
     long flag;
     int omx = mtmp->mx, omy = mtmp->my;
     struct obj *mw_tmp;
@@ -895,7 +895,7 @@ not_special:
     if ((!mtmp->mpeaceful || !rn2(10)) && (!Is_rogue_level(&u.uz))) {
         boolean in_line = lined_up(mtmp) &&
             (distmin(mtmp->mx, mtmp->my, mtmp->mux, mtmp->muy) <=
-             (throws_rocks(youmonst.data) ? 20 : ACURRSTR / 2 + 1));
+             (throws_rocks(youmonst.data) ? 20 : ACURR(A_STR) / 2 + 1));
 
         if (appr != 1 || !in_line)
             setlikes = TRUE;
@@ -916,6 +916,8 @@ not_special:
         ((!mtmp->mpeaceful || Conflict) &&
          dist2(mtmp->mx, mtmp->my, gx, gy) <= 8))
         can_tunnel = FALSE;
+
+    int jump = jump_ok(mtmp);
 
     nix = omx;
     niy = omy;
@@ -949,19 +951,21 @@ not_special:
         flag |= UNLOCKDOOR;
     if (doorbuster)
         flag |= BUSTDOOR;
+    if (jump)
+        flag |= ALLOW_JUMP;
     {
         int i, nx, ny, nearer, distance_tie;
         int cnt, chcnt;
         int ndist, nidist;
-        coord poss[9];
+        coord poss[ROWNO * COLNO];
         int ogx = gx;
         int ogy = gy;
         boolean forceline = FALSE;
 
         struct distmap_state ds;
 
-        /* Dragons try to avoid melee initiative, but there's no reason to avoid it if
-           their target is helpless */
+        /* Dragons try to avoid melee initiative, but there's no reason to
+           avoid it if their target is helpless */
         boolean thelpless = FALSE;
         if (dragon && mtmp->mstrategy == st_mon) {
             if (gx == mtmp->mux && gy == mtmp->muy) {
@@ -986,7 +990,7 @@ not_special:
 
         distmap_init(&ds, gx, gy, mtmp);
 
-        cnt = mfndpos(mtmp, poss, info, flag, 1);
+        cnt = mfndpos(mtmp, poss, info, flag, jump ? jump : 1);
         chcnt = 0;
         chi = -1;
         if (flag & OPENDOOR)
@@ -1021,33 +1025,48 @@ not_special:
                 avoid = TRUE;
         }
 
-        for (i = 0; i < cnt; i++) {
-            if (avoid && (info[i] & NOTONL))
-                continue;
-            else if (forceline && !(info[i] & NOTONL))
-                continue;
+        /* Do 2 passes. Don't check for jumping on the 2nd pass, in case
+           our jumping attempt failed (spellcast failure) */
+        int pass = 2;
+        while (pass--) {
+            for (i = 0; i < cnt; i++) {
+                if (avoid && (info[i] & NOTONL))
+                    continue;
+                else if (forceline && !(info[i] & NOTONL))
+                    continue;
+                else if (!pass && (info[i] & ALLOW_JUMP))
+                    continue;
 
-            nx = poss[i].x;
-            ny = poss[i].y;
+                nx = poss[i].x;
+                ny = poss[i].y;
 
-            ndist = distmap(&ds, nx, ny);
+                ndist = distmap(&ds, nx, ny);
 
-            nearer = (ndist < nidist);
-            distance_tie = (ndist == nidist);
+                nearer = (ndist < nidist);
+                distance_tie = (ndist == nidist);
 
-            if ((appr == 1 && nearer) ||
-                (appr == -1 && !nearer && !distance_tie) ||
-                (appr && distance_tie && !rn2(++chcnt)) ||
-                (!appr && !rn2(++chcnt)) || !mmoved) {
-                nix = nx;
-                niy = ny;
-                nidist = ndist;
-                chi = i;
-                mmoved = 1;
+                if ((appr == 1 && nearer) ||
+                    (appr == -1 && !nearer && !distance_tie) ||
+                    (appr && distance_tie && !rn2(++chcnt)) ||
+                    (!appr && !rn2(++chcnt)) || !mmoved) {
+                    nix = nx;
+                    niy = ny;
+                    nidist = ndist;
+                    chi = i;
+                    mmoved = 1;
 
-                if (appr && !distance_tie)
-                    chcnt = 1;
+                    if (appr && !distance_tie)
+                        chcnt = 1;
+                }
             }
+
+            if (mmoved && info[chi] & ALLOW_JUMP) {
+                int jumpres = mon_jump(mtmp, nix, niy);
+                if (jumpres)
+                    return jumpres;
+                mmoved = 0;
+            } else
+                break;
         }
     }
 

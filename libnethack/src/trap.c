@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-21 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-13 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -1118,7 +1118,7 @@ dotrap(struct trap *trap, unsigned trflags)
                 u.utrap = rn1(2, 2);
             else if (str < 18)
                 u.utrap = rnd(2);
-            else if (str < 69)
+            else if (str < 20)
                 u.utrap = 1;
             else {
                 u.utrap = 0;
@@ -2241,8 +2241,14 @@ mintrap(struct monst *mtmp)
                     pline(msgc_monneutral, "%s momentarily lethargic.",
                           M_verbs(mtmp, "seem"));
             }
+
+            /* Treat XL0 as XL1 */
+            int xl = m_mlev(mtmp);
+            if (xl < 1)
+                xl = 1;
+
             if (!resists_magm(mtmp))
-                mdrain_en(mtmp, dmg);
+                mdrain_en(mtmp, rnd(xl) + 1);
             break;
 
         case LANDMINE:
@@ -2458,7 +2464,7 @@ float_up(struct monst *mon)
             else
                 mon->mtrapped = 0;
             if (you || vis)
-                pline(statusheal, "%s float%s up, out of the pit!",
+                pline(statusheal, "%s up, out of the pit!",
                       M_verbs(mon, "float"));
             turnstate.vision_full_recalc = TRUE;     /* vision limits change */
             fill_pit(level, m_mx(mon), m_my(mon));

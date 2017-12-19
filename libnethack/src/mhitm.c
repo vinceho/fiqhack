@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-13 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -324,6 +324,7 @@ mattackm(struct monst *magr, struct monst *mdef)
         attk,   /* attack attempted this time */
         struck = 0,     /* hit at least once */
         res[NATTK];     /* results of all attacks */
+    strike = 0;
     const struct attack *mattk;
     struct attack alt_attk;
     const struct permonst *pa, *pd;
@@ -338,7 +339,8 @@ mattackm(struct monst *magr, struct monst *mdef)
     pa = magr->data;
     pd = mdef->data;
 
-    if (!mpreattack(magr, distmin(mdef->mx, mdef->my, magr->mx, magr->my) > 1))
+    if (!mpreattack(magr, mdef,
+                    distmin(mdef->mx, mdef->my, magr->mx, magr->my) > 1))
         return FALSE;
 
     /* Grid bugs cannot attack at an angle. */
@@ -721,7 +723,7 @@ gazemm(struct monst *magr, struct monst *mdef, const struct attack *mattk)
                 if (vis)
                     mon_reflects(magr, mdef, TRUE, 
                                  "%s gaze is reflected further by %s %s!",
-                                 uagr ? s_suffix(Monnam(magr)) : "Your");
+                                 uagr ? "Your" : s_suffix(Monnam(magr)));
                 break;
             }
             if (!visad) { /* probably you're invisible */
@@ -1083,7 +1085,7 @@ damage(struct monst *magr, struct monst *mdef, const struct attack *mattk)
         }
         break;
     case AD_FIRE:
-        if (cancelled) {
+        if (cancelled(magr)) {
             dmg = 0;
             break;
         }
@@ -1124,7 +1126,7 @@ damage(struct monst *magr, struct monst *mdef, const struct attack *mattk)
         }
         break;
     case AD_COLD:
-        if (cancelled) {
+        if (cancelled(magr)) {
             dmg = 0;
             break;
         }
@@ -1148,7 +1150,7 @@ damage(struct monst *magr, struct monst *mdef, const struct attack *mattk)
                   M_verbs(mdef, "are"));
         break;
     case AD_ELEC:
-        if (cancelled) {
+        if (cancelled(magr)) {
             dmg = 0;
             break;
         }
@@ -1168,7 +1170,7 @@ damage(struct monst *magr, struct monst *mdef, const struct attack *mattk)
             dmg = (dmg + 1) / 2;
         break;
     case AD_SLEE:
-        if (cancelled || magr->mspec_used || immune_to_sleep(mdef))
+        if (cancelled(magr) || magr->mspec_used || immune_to_sleep(mdef))
             break;
 
         magr->mspec_used += rnd(10);
@@ -1182,7 +1184,7 @@ damage(struct monst *magr, struct monst *mdef, const struct attack *mattk)
     case AD_DRST:
     case AD_DRDX:
     case AD_DRCO:
-        if (cancelled || rn2(8))
+        if (cancelled(magr) || rn2(8))
             break;
         poisoned(mdef, msgprintf("%s %s", s_suffix(Monnam(magr)),
                                  mpoisons_subj(magr, mattk)),
@@ -2276,7 +2278,7 @@ do_at_area(struct level *lev)
     /* Iterate the monlist, looking for AT_AREA. If one is found, perform a
        do_clear_area on the selected area, contained in the numdice attack
        number */
-    for (magr = lev->monlist; magr; magr = monnext(magr)) {
+    for (magr = monlist(lev); magr; magr = monnext(magr)) {
         if (magr != &youmonst && DEADMONSTER(magr))
             continue;
         if ((areaatk[i] = attacktype_fordmg(magr->data, AT_AREA, AD_ANY))) {

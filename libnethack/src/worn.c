@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-19 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -14,7 +14,8 @@ static unsigned do_equip(struct monst *, struct obj *, boolean, boolean);
 /* TODO: maybe make this into a real function */
 #define w_blocks(o,m) \
     ((o->otyp == MUMMY_WRAPPING && ((m) & W_MASK(os_armc))) ? INVIS :   \
-     (o->oartifact == ART_EYES_OF_THE_OVERWORLD &&                      \
+     ((o->oartifact == ART_EYES_OF_THE_OVERWORLD ||                     \
+       o->oartifact == ART_SUNSWORD) &&                                 \
       ((m) & W_MASK(os_tool))) ? BLINDED :                              \
      (o->otyp == CORNUTHAUM && ((m) & W_MASK(os_armh)) &&               \
       !Role_if (PM_WIZARD)) ? CLAIRVOYANT : 0)
@@ -195,7 +196,7 @@ m_dowear(struct monst *mon, boolean creation)
     if (in_mklev)
         creation = TRUE;
 
-    /* Note the restrictions here are the same as in dowear in do_wear.c except 
+    /* Note the restrictions here are the same as in dowear in do_wear.c except
        for the additional restriction on intelligence.  (Players are always
        intelligent, even if polymorphed). */
     if (verysmall(mon->data) || nohands(mon->data) || is_animal(mon->data))
@@ -333,7 +334,7 @@ m_dowear_type(struct monst *mon, enum objslot slot, boolean creation,
         /* I'd like to define a VISIBLE_ARM_BONUS which doesn't assume the
            monster knows obj->spe, but if I did that, a monster would keep
            switching forever between two -2 caps since when it took off one it
-           would forget spe and once again think the object is better than what 
+           would forget spe and once again think the object is better than what
            it already has. */
         if (best &&
             (ARM_BONUS(best) + extra_pref(mon, best) >=
@@ -432,7 +433,7 @@ equip(struct monst *mon, struct obj *obj,
         else if (is_shirt(obj) && (mon->misc_worn_check & W_MASK(os_arm)))
             return do_equip(mon, which_armor(mon, os_arm), FALSE, verbose);
     }
-    
+
     if (obj->oclass == RING_CLASS) {
         /* For rings, normally gloves are bypassed. However, rings can't be
            put on/off if the gloves are cursed, so we need to check for this
@@ -448,7 +449,7 @@ equip(struct monst *mon, struct obj *obj,
             }
         }
     }
-    
+
     /* slot taken by something else */
     if (mon->misc_worn_check & W_MASK(slot)) {
         if (obj->oclass == RING_CLASS) {
@@ -465,7 +466,7 @@ equip(struct monst *mon, struct obj *obj,
             return do_equip(mon, which_armor(mon, W_MASK(slot)),
                             FALSE, verbose);
     }
-    
+
     return do_equip(mon, obj, on, verbose);
 }
 
@@ -513,7 +514,7 @@ do_equip(struct monst *mon, struct obj *obj,
         if (!mon->mhp) /* died (lost a critical property) */
             return 2;
     }
-    
+
     mon->mfrozen += objects[obj->otyp].oc_delay;
     if (mon->mfrozen)
         mon->mcanmove = 0;
@@ -586,44 +587,6 @@ m_lose_armor(struct monst *mon, struct obj *obj)
         newsym(mon->mx, mon->my);
 }
 
-/* all objects with their bypass bit set should now be reset to normal */
-void
-clear_bypasses(void)
-{
-    struct obj *otmp, *nobj;
-    struct monst *mtmp;
-
-    for (otmp = level->objlist; otmp; otmp = nobj) {
-        nobj = otmp->nobj;
-        if (otmp->bypass) {
-            otmp->bypass = 0;
-            /* bypass will have inhibited any stacking, but since it's used for 
-               polymorph handling, the objects here probably have been
-               transformed and won't be stacked in the usual manner afterwards; 
-               so don't bother with this */
-        }
-    }
-    /* invent and migrating_pets chains shouldn't matter here */
-    for (mtmp = level->monlist; mtmp; mtmp = mtmp->nmon) {
-        if (DEADMONSTER(mtmp))
-            continue;
-        for (otmp = mtmp->minvent; otmp; otmp = otmp->nobj)
-            otmp->bypass = 0;
-    }
-    for (mtmp = migrating_mons; mtmp; mtmp = mtmp->nmon) {
-        for (otmp = mtmp->minvent; otmp; otmp = otmp->nobj)
-            otmp->bypass = 0;
-    }
-    flags.bypasses = FALSE;
-}
-
-void
-bypass_obj(struct obj *obj)
-{
-    obj->bypass = 1;
-    flags.bypasses = TRUE;
-}
-
 void
 mon_break_armor(struct monst *mon, boolean polyspot)
 {
@@ -657,8 +620,6 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                 if (vis)
                     pline(msgc_monneutral, "%s %s falls off!",
                           s_suffix(Monnam(mon)), cloak_simple_name(otmp));
-                if (polyspot)
-                    bypass_obj(otmp);
                 m_lose_armor(mon, otmp);
             } else {
                 if (show_msg) {
@@ -690,8 +651,6 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                 else
                     You_hear(msgc_levelsound, "a thud.");
             }
-            if (polyspot)
-                bypass_obj(otmp);
             m_lose_armor(mon, otmp);
         }
         if ((otmp = which_armor(mon, os_armc)) != 0) {
@@ -703,8 +662,6 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                     pline(msgc_levelsound, "%s shrinks out of %s %s!",
                           Monnam(mon), ppronoun, cloak_simple_name(otmp));
             }
-            if (polyspot)
-                bypass_obj(otmp);
             m_lose_armor(mon, otmp);
         }
         if ((otmp = which_armor(mon, os_armu)) != 0) {
@@ -717,8 +674,6 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                           "%s becomes much too small for %s shirt!",
                           Monnam(mon), ppronoun);
             }
-            if (polyspot)
-                bypass_obj(otmp);
             m_lose_armor(mon, otmp);
         }
     }
@@ -728,8 +683,6 @@ mon_break_armor(struct monst *mon, boolean polyspot)
             if (vis)
                 pline(msgc_monneutral, "%s drops %s gloves%s!", Monnam(mon),
                       ppronoun, MON_WEP(mon) ? " and weapon" : "");
-            if (polyspot)
-                bypass_obj(otmp);
             m_lose_armor(mon, otmp);
         }
         if ((otmp = which_armor(mon, os_arms)) != 0) {
@@ -740,8 +693,6 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                 else
                     You_hear(msgc_levelsound, "a clank.");
             }
-            if (polyspot)
-                bypass_obj(otmp);
             m_lose_armor(mon, otmp);
         }
     }
@@ -757,8 +708,6 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                 else if (is_metallic(otmp))  /* soft hats don't make a sound */
                     You_hear(msgc_levelsound, "a clank.");
             }
-            if (polyspot)
-                bypass_obj(otmp);
             m_lose_armor(mon, otmp);
         }
     }
@@ -773,15 +722,11 @@ mon_break_armor(struct monst *mon, boolean polyspot)
                           s_suffix(Monnam(mon)),
                           verysmall(mdat) ? "slide" : "are pushed", ppronoun);
             }
-            if (polyspot)
-                bypass_obj(otmp);
             m_lose_armor(mon, otmp);
         }
     }
     if (!can_saddle(mon)) {
         if ((otmp = which_armor(mon, os_saddle)) != 0) {
-            if (polyspot)
-                bypass_obj(otmp);
             m_lose_armor(mon, otmp);
             if (vis)
                 pline(mon->mtame ? msgc_petneutral : msgc_monneutral,
@@ -803,12 +748,26 @@ mon_break_armor(struct monst *mon, boolean polyspot)
 }
 
 /* Bias a monster's preferences towards armor that has special benefits.
-   Currently does speed boots and various rings. */
+   Currently does speed boots, various rings and for tame monsters, items
+   thrown at it. */
 int
 extra_pref(const struct monst *mon, struct obj *obj)
 {
     if (!obj)
         return 0;
+
+    /* Check for throwntime */
+    if (obj->thrown_time) {
+        /* Figure out which item was thrown last for the appropriate slot. */
+        struct obj *oobj;
+        for (oobj = mon->minvent; oobj; oobj = oobj->nobj)
+            if (oobj != obj && which_slot(oobj) == which_slot(obj) &&
+                oobj->thrown_time > obj->thrown_time)
+                break;
+
+        if (!oobj)
+            return 100;
+    }
 
     /* Check for speed boots */
     if (obj->otyp == SPEED_BOOTS && !very_fast(mon))

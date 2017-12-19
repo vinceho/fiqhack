@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-21 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-08 */
 /* Copyright (c) 1989 Mike Threepoint                             */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* Copyright (c) 2014 Alex Smith                                  */
@@ -490,6 +490,8 @@ obj_affects(const struct monst *user, struct monst *target, struct obj *obj)
         /* fallthrough */
     case WAN_SLEEP:
     case SPE_SLEEP:
+        if (m_helpless(target, hm_all))
+            return FALSE;
         return !prop_wary(user, target, SLEEP_RES);
     case WAN_LIGHTNING:
         return !prop_wary(user, target, SHOCK_RES);
@@ -984,6 +986,11 @@ update_property(struct monst *mon, enum youprop prop,
 
     /* Invalidate property cache */
     mon->mintrinsic_cache[prop] &= ~W_MASK(os_cache);
+
+    /* Don't do anything during initialization. This is safe, and prevents
+       messages pertaining to trinsics from showing during newgame. */
+    if (turnstate.in_newgame)
+        return FALSE;
 
     /* update_property() can run for monsters wearing armor during level creation,
        or potentially off-level, so level can be non-existent or outright wrong,
@@ -2573,17 +2580,18 @@ msensem(const struct monst *viewer, const struct monst *viewee)
     if (viewer->data == &mons[PM_XORN] && money_cnt(viewee->minvent))
         sensemethod |= MSENSE_GOLDSMELL;
 
-    /* Cooperative telepathy. Friendly monsters reveal themselves to each other
-       with telepathy. If one has telepathy, that one's telepathy determines how
-       easily they sense each other. If both has, they can be seen everywhere */
-    if (!mindless(viewer->data) && !m_helpless(viewer, hm_unconscious)) {
-        unsigned telepathy_reason = telepathic(viewee);
-        boolean strong_telepathy = has_immunity(viewer, TELEPAT);
-        if ((telepathy_reason && blinded) ||
-            (strong_telepathy &&
-             distance <= BOLT_LIM * BOLT_LIM))
-            sensemethod |= MSENSE_TEAMTELEPATHY;
+    /* Cooperative telepathy. Telepathy works in both directions. If both the
+       viewer and the viewee have telepathy, they can see each other
+       everywhere. */
+    if (!mindless(viewer->data) && !m_helpless(viewer, hm_unconscious) &&
+        !mindless(viewee->data) && !(sensemethod & MSENSE_TELEPATHY)) {
+        unsigned itelepat = (telepathic(viewer) | telepathic(viewee));
+        unsigned etelepat = has_immunity(viewer, TELEPAT);
+        etelepat |= has_immunity(viewee, TELEPAT);
         if (telepathic(viewer) && telepathic(viewee))
+            sensemethod |= MSENSE_TEAMTELEPATHY;
+        else if ((etelepat && distance <= BOLT_LIM * BOLT_LIM) ||
+                 (itelepat && blinded))
             sensemethod |= MSENSE_TEAMTELEPATHY;
     }
 
@@ -2779,7 +2787,7 @@ enlighten_mon(struct monst *mon, int final)
 #define mon_has(menu,mon,attr)        enl_msg(menu,monname,has,had,attr)
 #define mon_can(menu,mon,attr)        enl_msg(menu,monname,can,could,attr)
 #define mon_sees(menu,mon,attr)       enl_msg(menu,monname,see,saw,attr)
-#define mon_x(menu,mon,attr)          enl_msg(menu,monname,"","d",attr)
+#define mon_x(menu,mon,attr)          enl_msg(menu,monname,"","",attr)
     
     if (mon == &youmonst && flags.elbereth_enabled &&
         u.uevent.uhand_of_elbereth) {
@@ -2896,7 +2904,8 @@ enlighten_mon(struct monst *mon, int final)
     if (slippery_fingers(mon))
         mon_has(&menu, mon, msgcat("slippery ", makeplural(body_part(FINGER))));
     if (fumbling(mon))
-        mon_x(&menu, mon, " fumble");
+        mon_x(&menu, mon, final ? " fumbled" :
+              mon == &youmonst ? " fumble" : "fumbles");
     if (leg_hurt(mon))
         mon_has(&menu, mon, msgcat("wounded", makeplural(body_part(LEG))));;
     if (restful_sleep(mon))
@@ -2959,7 +2968,8 @@ enlighten_mon(struct monst *mon, int final)
     if (stealthy(mon))
         mon_is(&menu, mon, "stealthy");
     if (aggravating(mon))
-        mon_x(&menu, mon, mon == &youmonst ? " aggravate monsters" :
+        mon_x(&menu, mon, final ? " aggravated monsters" :
+              mon == &youmonst ? " aggravate monsters" :
               " aggravates monsters");
     if (conflicting(mon))
         mon_is(&menu, mon, "conflicting");
@@ -3021,7 +3031,8 @@ enlighten_mon(struct monst *mon, int final)
     if (slow_digestion(mon))
         mon_has(&menu, mon, "slower digestion");
     if (regenerates(mon))
-        mon_x(&menu, mon, mon == &youmonst ? " regenerate" : " regenerates");
+        mon_x(&menu, mon, final ? " regenerated" :
+              mon == &youmonst ? " regenerate" : " regenerates");
     if (protected(mon) || protbon(mon)) {
         int prot = protbon(mon);
         if (mon == &youmonst)

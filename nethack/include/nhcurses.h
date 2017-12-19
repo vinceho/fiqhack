@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-15 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
 /* Copyright (c) Daniel Thaler, 2011                              */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -182,6 +182,7 @@ struct interface_flags {
     nh_bool initialized;  /* false before init_curses_ui() */
     nh_bool ingame;
     nh_bool connected_to_server;
+    nh_bool autoload;
     enum nh_followmode current_followmode;
     enum nh_followmode available_followmode;
     nh_bool in_zero_time_command;
@@ -319,6 +320,7 @@ struct settings {
     enum nh_palette palette;         /* palette to use for text */
 
     char *tileset;                   /* tileset file name */
+    char *fontfile;                  /* font file name */
 
     nh_bool alt_is_esc; /* parse Alt-letter as ESC letter */
     nh_bool classic_status; /* mimic NH3's status bar */
@@ -476,7 +478,7 @@ extern nh_bool random_player;
 extern struct gamewin *firstgw, *lastgw;
 extern struct nh_cmd_desc *keymap[KEY_MAX + 1];
 extern const char *nhlogo_small[11], *nhlogo_large[14];
-extern char *override_hackdir, *override_userdir;
+extern char *override_hackdir, *override_userdir, *override_savedir;
 extern int repeats_remaining;
 extern char *tiletable;
 extern int tiletable_len;
@@ -536,6 +538,9 @@ extern void free_keymap(void);
 extern void show_keymap_menu(nh_bool readonly);
 extern void handle_nested_key(int key);
 extern enum nh_direction key_to_dir(int key, int* range);
+
+/* mail.c */
+extern void sendmail(void);
 
 /* main.c */
 extern void curses_impossible(const char *msg);
@@ -650,9 +655,10 @@ extern void curses_request_command(nh_bool debug, nh_bool completed,
 extern void describe_game(char *buf, enum nh_log_status status,
                           struct nh_game_info *gi);
 extern void rungame(nh_bool net);
-extern nh_bool loadgame(void);
+extern nh_bool loadgame(nh_bool autoload);
 extern void game_ended(int status, fnchar *filename, nh_bool net);
 extern fnchar **list_gamefiles(fnchar *dir, int *count);
+extern void set_uifollowmode(enum nh_followmode, nh_bool);
 extern enum nh_play_status playgame(int fd_or_gameno, enum nh_followmode);
 
 /* sidebar.c */

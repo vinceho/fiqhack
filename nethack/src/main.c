@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-15 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-18 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -30,7 +30,7 @@ int cmdline_gend = ROLE_NONE, cmdline_align = ROLE_NONE;
 char cmdline_name[BUFSZ] = {0};
 nh_bool random_player = FALSE;
 
-char *override_hackdir, *override_userdir;
+char *override_hackdir, *override_userdir, *override_savedir;
 
 enum menuitems {
     NEWGAME = 1,
@@ -278,6 +278,11 @@ mainmenu(void)
         mvwaddstr(basewin, LINES - 4, COLS - strlen(verstr), verstr);
         wnoutrefresh(basewin);
 
+        if (ui_flags.autoload) {
+            loadgame(TRUE);
+            break;
+        }
+
         if (first) {
             network_motd();
             first = FALSE;
@@ -304,7 +309,7 @@ mainmenu(void)
             break;
 
         case LOAD:
-            loadgame();
+            loadgame(FALSE);
             break;
 
         case REPLAY:
@@ -424,11 +429,12 @@ process_args(int argc, char *argv[])
         switch (argv[0][1]) {
         case '-':
             if (!strcmp(argv[0], "--help")) {
-                puts("Usage: nethack4 [--interface PLUGIN] [OPTIONS]");
+                puts("Usage: fiqhack [--interface PLUGIN] [OPTIONS]");
                 puts("");
                 puts("-k          connection-only mode");
                 puts("-D          start games in wizard mode");
                 puts("-X          start games in explore mode");
+                puts("-W [dir]    load watchmode with optional save dir");
                 puts("-u name     specify player name");
                 puts("-p role     specify role");
                 puts("-r race     specify race");
@@ -457,6 +463,22 @@ process_args(int argc, char *argv[])
 
         case 'X':
             ui_flags.playmode = MODE_EXPLORE;
+            break;
+
+        case 'W':
+            ui_flags.autoload = TRUE;
+#ifdef UNIX
+            if (setregid(getgid(), getgid()) < 0)
+                exit(14);
+#endif
+            if (argv[0][2]) {
+                override_savedir = argv[0] + 2;
+            } else if (argc > 1) {
+                argc--;
+                argv++;
+                override_savedir = argv[0];
+            }
+            break;
             break;
 
         case 'u':

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-15 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-18 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -593,7 +593,8 @@ just_reloaded_save:
                           "That direction has no meaning while replaying.");
                     continue;
                 }
-            } else if (!strcmp(cmd.cmd, "grope")) {
+            } else if (!strcmp(cmd.cmd, "grope") &&
+                       program_state.followmode == FM_REPLAY) {
                 /* go to a specific turn */
                 int trycnt = 0;
                 int turn = 0;
@@ -612,6 +613,9 @@ just_reloaded_save:
                 turn = atoi(buf);
                 log_sync(turn, TLU_TURNS, FALSE);
                 goto just_reloaded_save;
+            } else if (!strcmp(cmd.cmd, "drink") &&
+                       program_state.followmode == FM_WATCH) {
+                terminate(GAME_DETACHED);
             } else {
                 /* Internal commands weren't sent by the player, so don't
                    complain about them, just ignore them. Ditto for repeat. */
@@ -860,7 +864,7 @@ you_moved(void)
 
             int *hp = &(u.uhp);
             int *hpmax = &(u.uhpmax);
-            if (flags.polyinit_mnum != -1) {
+            if (Upolyd) {
                 hp = &(u.mh);
                 hpmax = &(u.mhmax);
             }
@@ -883,17 +887,17 @@ you_moved(void)
                 wtcap = UNENCUMBERED;
             } else if (Upolyd && youmonst.data->mlet == S_EEL &&
                        !is_pool(level, u.ux, u.uy) && !Is_waterlevel(&u.uz)) {
-                if (*hp > 1)
-                    (*hp)--;
-                else if (*hp < 1)
+                if (u.mh > 1)
+                    u.mh--;
+                else if (u.mh < 1)
                     rehumanize(DIED, NULL);
             } else if (flags.polyinit_mnum == -1 &&
-                       Upolyd && *hp < *hpmax) {
-                if (*hp < 1)
+                       Upolyd && u.mh < u.mhmax) {
+                if (u.mh < 1)
                     rehumanize(DIED, NULL);
                 else if (Regeneration ||
                          (wtcap < MOD_ENCUMBER && !(moves % 20)))
-                    (*hp)++;
+                    u.mh++;
             } else if (*hp < *hpmax &&
                        (wtcap < MOD_ENCUMBER || !u.umoved || Regeneration)) {
                 *hp += regeneration_by_rate(regen_rate(&youmonst,
@@ -1450,12 +1454,6 @@ command_input(int cmdidx, struct nh_cmd_arg *arg)
     if (turnstate.vision_full_recalc)
         vision_recalc(0);       /* vision! */
 
-    /* We must do this /before/ the monsters get their turn, to prevent bypass
-       flags persisting from one action to the next. (TODO: The bypass system
-       could really do with an overhaul.) */
-    if (flags.bypasses)
-        clear_bypasses();
-
     if (didmove)
         you_moved();
 
@@ -1473,6 +1471,7 @@ newgame(microseconds birthday, struct newgame_options *ngo)
 {
     int i;
 
+    turnstate.in_newgame = TRUE;
     flags.ident = FIRST_PERMANENT_IDENT; /* lower values are temporaries */
 
     for (i = 0; i < NUMMONS; i++)
@@ -1525,6 +1524,7 @@ newgame(microseconds birthday, struct newgame_options *ngo)
 
     u.moveamt = NORMAL_SPEED;   /* hero is normal speed on turn 1 */
     post_init_tasks();
+    turnstate.in_newgame = FALSE;
 }
 
 /*allmain.c*/

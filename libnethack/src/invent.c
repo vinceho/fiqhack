@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-06 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-14 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -340,7 +340,9 @@ addinv_stats(struct obj *obj)
     }
 }
 
-/* Add obj to inventory and print potential encumbrance changes */
+/* Add obj to inventory and print potential encumbrance changes.
+   Before replacing addinv with pickinv: consider if there's a reason that it
+   uses addinv. */
 struct obj *
 pickinv(struct obj *obj)
 {
@@ -2253,7 +2255,7 @@ mergable(struct obj *otmp, struct obj *obj)
         obj->obroken != otmp->obroken || obj->otrapped != otmp->otrapped ||
         obj->lamplit != otmp->lamplit || obj->greased != otmp->greased ||
         obj->oeroded != otmp->oeroded || obj->oeroded2 != otmp->oeroded2 ||
-        obj->bypass != otmp->bypass)
+        obj->to_be_hit != otmp->to_be_hit)
         return FALSE;
 
     if ((obj->oclass == WEAPON_CLASS || obj->oclass == ARMOR_CLASS) &&

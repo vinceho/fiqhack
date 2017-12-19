@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Alex Smith, 2017-06-29 */
+/* Last modified by Fredrik Ljungdahl, 2017-12-14 */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -83,9 +83,9 @@ extern void break_conduct(enum player_conduct);
 extern int doapply(const struct nh_cmd_arg *);
 extern int dorub(const struct nh_cmd_arg *);
 extern int dojump(const struct nh_cmd_arg *);
-extern int get_jump_coords(const struct musable *, coord *, int);
-extern void jump_to_coords(coord *cc);
-extern int jump(const struct musable *, int);
+extern int validate_jump(const struct musable *, coord *, boolean, boolean);
+extern void jump_to_coords(struct monst *, coord *);
+extern int jump(const struct musable *, boolean);
 extern int number_leashed(void);
 extern void o_unleash(struct obj *);
 extern void m_unleash(struct monst *, boolean);
@@ -159,7 +159,6 @@ extern void redist_attr(void);
 extern void adjabil(int, int);
 extern int newhp(void);
 extern schar acurr(const struct monst *, int);
-extern schar acurrstr(void);
 extern void adjalign(int);
 extern void calc_attr_bonus(void);
 extern const char *beautiful(void);
@@ -444,6 +443,7 @@ extern void deliver_object(struct obj *obj, xchar dnum, xchar dlevel,
 extern int dothrow(const struct nh_cmd_arg *);
 extern int dofire(const struct nh_cmd_arg *);
 extern void hitfloor(struct obj *);
+extern boolean mhurtle_step_ok(void *, int, int);
 extern void hurtle(int, int, int, boolean);
 extern void mhurtle(struct monst *, int, int, int);
 extern boolean throwing_weapon(const struct obj *);
@@ -459,6 +459,8 @@ extern boolean breaktest(struct obj *);
 extern boolean walk_path(coord *, coord *, boolean(*)(void *, int, int),
                          void *);
 extern boolean hurtle_step(void *, int, int);
+extern boolean mhurtle_step(void *, int, int);
+extern boolean mhurtle_step_ok(void *, int, int);
 
 /* ### dump.c ### */
 
@@ -651,6 +653,7 @@ extern void movobj(struct obj *, xchar, xchar);
 extern boolean may_dig(struct level *lev, xchar x, xchar y);
 extern boolean may_passwall(struct level *lev, xchar x, xchar y);
 extern boolean bad_rock(const struct monst *, xchar, xchar);
+extern boolean can_diagonal_squeeze(const struct monst *, boolean);
 extern boolean invocation_pos(const d_level * dlev, xchar x, xchar y);
 extern boolean travelling(void);
 extern void init_test_move_cache(struct test_move_cache *);
@@ -808,7 +811,8 @@ extern microseconds time_for_time_line(void);
 
 /* ### lock.c ### */
 
-extern int pick_lock(struct obj *, const struct nh_cmd_arg *);
+extern struct obj *get_current_unlock_tool(void);
+extern int pick_lock(struct obj *, const struct nh_cmd_arg *, struct obj *);
 extern int doforce(const struct nh_cmd_arg *);
 extern boolean boxlock(struct obj *, struct obj *);
 extern boolean doorlock(struct obj *, int, int);
@@ -993,7 +997,7 @@ extern void do_at_area(struct level *);
 
 /* ### mhitq.c ### */
 
-extern boolean mpreattack(struct monst *, boolean);
+extern boolean mpreattack(struct monst *, struct monst *, boolean);
 extern int mattackq(struct monst *, int, int);
 
 /* ### mhitu.c ### */
@@ -1157,11 +1161,13 @@ extern boolean mpickstuff(struct monst *, boolean);
 extern int curr_mon_load(const struct monst *);
 extern int max_mon_load(const struct monst *);
 extern boolean can_carry(struct monst *, struct obj *);
+extern int jump_ok(struct monst *);
+extern int mon_jump(struct monst *, int, int);
 extern void find_best_lineup(struct monst *, xchar *, xchar *);
 extern int mfndpos(struct monst *, coord *, long *, long, int);
 extern boolean monnear(struct monst *, int, int);
 extern void dmonsfree(struct level *lev);
-extern boolean can_act_this_turn(struct monst *);
+extern int can_act_this_turn(struct monst *);
 extern void adjust_move_offset(struct monst *, int, int);
 extern int mcalcmove(struct monst *);
 extern void mcalcdistress(void);
@@ -1474,7 +1480,7 @@ extern void make_sick(struct monst *, long, const char *, boolean, int);
 extern int dodrink(const struct nh_cmd_arg *);
 extern int dopotion(struct obj *);
 extern int peffects(struct monst *, struct obj *, int *, int *);
-extern void healup(int, int, boolean, boolean);
+extern boolean healup(int, int, boolean, boolean);
 extern void strange_feeling(struct obj *, const char *);
 extern void potionhit(struct monst *, struct obj *, struct monst *);
 extern void potionbreathe(struct monst *, struct obj *);
@@ -1500,6 +1506,7 @@ extern const char *align_gname(aligntyp);
 extern const char *halu_gname(aligntyp);
 extern const char *align_gtitle(aligntyp);
 extern void altar_wrath(int, int);
+extern void set_prayreminder(struct monst *, enum pray_type);
 
 /* ### priest.c ### */
 
@@ -2136,8 +2143,6 @@ extern int find_mac(struct monst *);
 extern void m_dowear(struct monst *, boolean);
 extern struct obj *which_armor(const struct monst *, enum objslot);
 extern void mon_break_armor(struct monst *, boolean);
-extern void bypass_obj(struct obj *);
-extern void clear_bypasses(void);
 extern int racial_exception(struct monst *, struct obj *);
 extern int extra_pref(const struct monst *, struct obj *);
 
@@ -2159,9 +2164,10 @@ extern boolean drain_item(struct obj *);
 extern boolean poly_proof(struct obj *);
 extern struct obj *poly_obj(struct obj *, int);
 extern boolean obj_resists(struct obj *, int, int);
+extern int bhit_at(struct monst *, struct obj *, int, int, int);
 extern int bhito(struct obj *, struct obj *);
-extern int bhitpile(struct obj *, int (*)(struct obj *, struct obj *), int,
-                    int);
+extern void bhitinv(struct monst *, struct obj *);
+extern int bhitpile(struct monst *, struct obj *, int, int);
 extern void backfire(struct obj *);
 extern int wrestable(struct obj *wand);
 extern int zappable(struct monst *, struct obj *);
