@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Alex Smith, 2017-11-18 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -21,6 +21,9 @@ static void mvault_tele(struct monst *);
  *
  * This function might be called during level generation, so should return
  * deterministic results.
+ *
+ * This function, via distmap, is the most commonly called function in the
+ * entire game, so logic order matters.
  */
 boolean
 goodpos(struct level *lev, int x, int y, struct monst *mtmp, unsigned gpflags)
@@ -38,6 +41,22 @@ goodpos(struct level *lev, int x, int y, struct monst *mtmp, unsigned gpflags)
     if (mtmp != &youmonst && x == u.ux && y == u.uy &&
         (!u.usteed || mtmp != u.usteed) && !(gpflags & MM_IGNOREMONST))
         return FALSE;
+
+    if (mtmp) {
+        mdat = mtmp->data;
+        if (IS_STWALL(lev->locations[x][y].typ)) {
+            /* phasing(mtmp) */
+            if (pm_phasing(mdat) && may_passwall(lev, x, y))
+                return TRUE;
+            if (gpflags & MM_CHEWROCK && may_dig(lev, x, y))
+                return TRUE;
+        }
+    }
+
+    if (!ACCESSIBLE(lev->locations[x][y].typ)) {
+        if (!(is_pool(lev, x, y) && ignorewater))
+            return FALSE;
+    }
 
     if (mtmp) {
         struct monst *mtmp2 = (gpflags & MM_IGNOREMONST) ?
@@ -58,15 +77,15 @@ goodpos(struct level *lev, int x, int y, struct monst *mtmp, unsigned gpflags)
         if (mtmp2 && (mtmp2 != mtmp || mtmp->wormno))
             return FALSE;
 
-        mdat = mtmp->data;
         /* TODO: this function depends on mtmp not necessarily being fully valid.
            thus, we can't check general properties for now... */
         if (is_pool(lev, x, y) && !ignorewater) {
             if (mtmp == &youmonst)
-                return !!(Levitation || Flying || Wwalking || Swimming ||
-                          Breathless);
+                return !!(aboveliquid(&youmonst) || Wwalking ||
+                          Swimming || Breathless);
             else
-                return (is_flyer(mdat) || pm_swims(mdat) || is_clinger(mdat));
+                return (!Is_waterlevel(&(lev->z)) &&
+                        (is_flyer(mdat) || pm_swims(mdat) || is_clinger(mdat)));
             /* return (levitates(mtmp) || swims(mtmp) || flying(mtmp) ||
                waterwalks(mtmp) || unbreathing(mtmp)); */
         }
@@ -74,30 +93,20 @@ goodpos(struct level *lev, int x, int y, struct monst *mtmp, unsigned gpflags)
             return FALSE;
         else if (is_lava(lev, x, y)) {
             if (mtmp == &youmonst)
-                return !!Levitation;
+                return !!aboveliquid(&youmonst);
             else
-                return is_flyer(mdat) || likes_lava(mdat);
+                return (!Is_waterlevel(&(lev->z)) &&
+                        (is_flyer(mdat) || likes_lava(mdat)));
             /* return (!!levitates(mtmp) || !!flying(mtmp) ||
                likes_lava(mtmp->data)); */
         }
-        if (IS_STWALL(lev->locations[x][y].typ)) {
-            /* phasing(mtmp) */
-            if (pm_phasing(mdat) && may_passwall(lev, x, y))
-                return TRUE;
-            if (gpflags & MM_CHEWROCK && may_dig(lev, x, y))
-                return TRUE;
-        }
-    }
-    if (!ACCESSIBLE(lev->locations[x][y].typ)) {
-        if (!(is_pool(lev, x, y) && ignorewater))
-            return FALSE;
     }
 
     if (!(gpflags & MM_IGNOREDOORS) && closed_door(lev, x, y) &&
         (!mdat || !amorphous(mdat)))
         return FALSE;
-    if (!(gpflags & MM_IGNOREDOORS) && sobj_at(BOULDER, lev, x, y) &&
-        (!mdat || !throws_rocks(mdat)))
+    if (!(gpflags & MM_IGNOREDOORS) && (!mdat || !throws_rocks(mdat)) &&
+        sobj_at(BOULDER, lev, x, y))
         return FALSE;
     return TRUE;
 }
@@ -426,7 +435,8 @@ tele_impl(boolean wizard_tele, boolean run_next_to_u)
     }
 
     /* when it happens at all, happens too often to be worth a custom RNG */
-    if ((Uhave_amulet || On_W_tower_level(&u.uz)) && !rn2(3)) {
+    if (!wizard_tele &&
+        (Uhave_amulet || On_W_tower_level(&u.uz)) && !rn2(3)) {
         pline(msgc_failrandom, "You feel disoriented for a moment.");
         return 1;
     }
@@ -440,6 +450,10 @@ tele_impl(boolean wizard_tele, boolean run_next_to_u)
                   u.usteed ? msgcat(" and ", mon_nam(u.usteed)) : "");
             cc.x = u.ux;
             cc.y = u.uy;
+
+            if (flags.travelcc.x != COLNO && flags.travelcc.y != ROWNO)
+                cc = flags.travelcc;
+
             if (getpos(&cc, FALSE, "the teleport target", FALSE)
                 == NHCR_CLIENT_CANCEL)
                 return 0; /* abort */
@@ -546,7 +560,7 @@ mdotele(struct musable *m)
         if (castit) {
             exercise(A_WIS, TRUE);
             m->spell = SPE_TELEPORT_AWAY;
-            if (spelleffects(TRUE, m))
+            if (spelleffects(TRUE, m, FALSE))
                 return 1;
             else
                 return 0;
@@ -599,8 +613,8 @@ level_tele_impl(struct monst *mon, boolean wizard_tele)
        that the hero will have a hard time tracking down said pet (and for
        pacifism in particular, is essentially an instadeath), justifies
        using petfatal for messages involving these */
-    if ((mon_has_amulet(mon) || In_endgame(m_mz(mon)) || In_sokoban(m_mz(mon))) &&
-        !wizard_tele) {
+    if ((mon_has_amulet(mon) || In_endgame(m_mz(mon)) ||
+         Sokoban_lev(m_dlevel(mon))) && !wizard_tele) {
         if (you || vis)
             pline(msgc_hint, "%s %s very disoriented for a moment.",
                   you ? "You" : Monnam(mon),
@@ -797,7 +811,7 @@ level_tele_impl(struct monst *mon, boolean wizard_tele)
 
         if (killer) {
             ;   /* arrival in heaven is pending */
-        } else if (Levitation) {
+        } else if (levitates(&youmonst)) {
             escape_by_flying = "float gently down to earth";
         } else if (Flying) {
             escape_by_flying = "fly down to the ground";
@@ -916,7 +930,7 @@ void
 level_tele_trap(struct trap *trap)
 {
     pline_implied(msgc_nonmonbad, "You %s onto a level teleport trap!",
-                  Levitation ? (const char *)"float" :
+                  levitates(&youmonst) ? (const char *)"float" :
                   locomotion(youmonst.data, "step"));
     if (Antimagic) {
         shieldeff(u.ux, u.uy);
@@ -930,8 +944,6 @@ level_tele_trap(struct trap *trap)
               "You are momentarily blinded by a flash of light.");
     else
         pline(msgc_nonmonbad, "You are momentarily disoriented.");
-    deltrap(level, trap);
-    newsym(u.ux, u.uy); /* get rid of trap symbol */
     level_tele();
 }
 
@@ -996,6 +1008,9 @@ rloc_pos_ok(int x, int y,       /* coordinates of candidate location */
 void
 rloc_to(struct monst *mtmp, int x, int y)
 {
+    if (u.ustuck == mtmp && Engulfed && level->flags.noteleport)
+        unstuck(mtmp);
+
     int oldx = mtmp->mx, oldy = mtmp->my;
     boolean resident_shk = mx_eshk(mtmp) && inhishop(mtmp);
     struct level *lev = mtmp->dlevel;

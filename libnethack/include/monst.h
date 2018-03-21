@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-10 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-17 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -10,6 +10,7 @@
 # include "coord.h"
 # include "monuse.h"
 # include "prop.h"
+# include "skills.h"
 
 /* The weapon_check flag is used two ways:
  * 1) When calling mon_wield_item, is 2-6 depending on what is desired.
@@ -71,8 +72,10 @@ struct monst {
     struct obj *minvent;
     struct obj *meminvent;
     struct obj *mw;             /* weapon */
-    unsigned int mstuck;        /* is the monster stuck to another monster */
     struct mextra *mextra;      /* extended data for some monsters (or names) */
+    unsigned int angr;          /* Is the monster angry at someone? */
+    unsigned int master;        /* "tame" to non-player */
+    unsigned int mstuck;        /* is the monster stuck to another monster */
     unsigned int m_id;
     int mhp, mhpmax;
     int pw, pwmax;
@@ -153,7 +156,6 @@ struct monst {
 
     /* intrinsic format: os_outside:1, os_timeout:15 */
     short mintrinsic[LAST_PROP + 1]; /* monster intrinsics */
-    int mintrinsic_cache[LAST_PROP + 1]; /* cached from above */
 
     /* turnstate; doesn't count against bitfield bit count */
     unsigned deadmonster:1;     /* always 0 at neutral turnstate */
@@ -167,6 +169,9 @@ struct monst {
 
     short former_player; /* info about this being the ghost or whatnot
                             of a former player, from a bones file */
+
+    struct skills skills[P_NUM_SKILLS];
+
     int meating;        /* monster is eating timeout */
     schar mhitinc;      /* monster intrinsic to-hit bonus/penalty */
     schar mdaminc;      /* monster intrinsic damage bonus/penalty */

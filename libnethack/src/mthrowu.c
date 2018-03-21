@@ -1,10 +1,10 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-07 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-17 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
 #include "hack.h"
-#include "mfndpos.h"    /* ALLOW_M */
+#include "mfndpos.h"    /* ALLOW_RANGED */
 
 static int drop_throw(struct obj *, boolean, int, int);
 static boolean qlined_up(const struct monst *mtmp, int ax, int ay,
@@ -399,7 +399,7 @@ m_throw(struct monst *mon, int x, int y, int dx, int dy, int range,
                     pline(msgc_moncombatgood,
                           "You are not interested in %s junk.",
                           s_suffix(mon_nam(mon)));
-                    makeknown(singleobj->otyp);
+                    tell_discovery(singleobj);
                     dropy(singleobj);
                 } else {
                     pline(msgc_consequence, "You accept %s gift in the spirit "
@@ -810,7 +810,8 @@ m_beam_ok(const struct monst *magr, int dx, int dy,
            the above MS_LEADER case). */
         if (mat && (msensem(magr, mat) & ~MSENSE_ITEMMIMIC) &&
             !confused(magr)) {
-            if (mm_aggression(magr, mat) & ALLOW_M && !helpful) {
+            if ((mm_aggression(magr, mat, Conflict) & ALLOW_RANGED) &&
+                !helpful) {
                 /* we want to target this monster */
                 if (mdef)
                     *mdef = mat;

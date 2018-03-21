@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-11 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -140,9 +140,10 @@ doread(const struct nh_cmd_arg *arg)
         }
     }
     if (!seffects(&youmonst, scroll, &known)) {
-        if (!objects[scroll->otyp].oc_name_known) {
+        if (!objects[scroll->otyp].oc_name_known &&
+            scroll->oclass != SPBOOK_CLASS) {
             if (known) {
-                makeknown(scroll->otyp);
+                tell_discovery(scroll);
                 more_experienced(0, 10);
             } else if (!objects[scroll->otyp].oc_uname)
                 docall(scroll);
@@ -818,33 +819,14 @@ maybe_tame(struct monst *mon, struct monst *mtmp, struct obj *sobj)
         return;
     }
 
-    tame_result++;
-    switch (tame_result) {
-    case 0:
-        if (!mtmp->mpeaceful && !mtmp->mtame)
-            break;
+    if (tame_result == 2 && mx_eshk(mtmp))
+        make_happy_shk(mtmp, FALSE);
+    sethostility(mtmp, FALSE, FALSE);
 
-        if (!you) /* setmangry screws with your alignment */
-            msethostility(mtmp, TRUE, FALSE);
-        else
-            setmangry(mtmp);
-        break;
-    case 1:
-        if (mtmp->mpeaceful && !mtmp->mtame)
-            break;
-
-        if (!mx_eshk(mtmp)) /* peaceful taming keeps hostile shk */
-            msethostility(mtmp, FALSE, FALSE);
-        break;
-    case 2:
-        if (mtmp->mtame)
-            break;
-
-        if (mx_eshk(mtmp))
-            make_happy_shk(mtmp, FALSE);
-        else
-            tamedog(mtmp, NULL);
-    }
+    if (sobj->cursed)
+        msethostility(mon, mtmp, TRUE, FALSE);
+    else
+        mtamedog(mon, mtmp, NULL);
 }
 
 static void
@@ -1169,7 +1151,7 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
                     otmp->spe--;
                     if (you && (otmp->otyp == HELM_OF_BRILLIANCE ||
                                 otmp->otyp == GAUNTLETS_OF_DEXTERITY))
-                        makeknown(otmp->otyp);
+                        tell_discovery(otmp);
                 }
                 if (!resists_stun(mon))
                     inc_timeout(mon, STUNNED, rn1(10, 10), FALSE);
@@ -1507,11 +1489,11 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
                     pline_implied(!cval ? msgc_youdiscover : msgc_uiprompt,
                                   "This is an identify scroll.");
             } else if (vis)
-                pline(msgc_monneutral, "%s is granted an insight!", Monnam(mon));
+                pline(msgc_monneutral, "%s is granted an insight!",
+                      Monnam(mon));
 
             if (sobj->otyp == SPE_IDENTIFY)
-                idpower = (you ? P_SKILL(P_DIVINATION_SPELL) :
-                           mprof(mon, MP_SDIVN));
+                idpower = MP_SKILL(mon, P_DIVINATION_SPELL);
             else {
                 if (sobj->blessed)
                     idpower = P_EXPERT;
@@ -1670,12 +1652,12 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
         if (you || vis)
             if (!objects[sobj->otyp].oc_name_known)
                 more_experienced(0, 10);
+        if (you || vis)
+            tell_discovery(sobj);
         if (you)
             useup(sobj);
         else
             m_useup(mon, sobj);
-        if (you || vis)
-            makeknown(SCR_FIRE);
         if (confused) {
             if (!you && vis)
                 pline(msgc_monneutral, "Oh, look, what a pretty fire!");
@@ -1735,7 +1717,7 @@ seffects(struct monst *mon, struct obj *sobj, boolean *known)
                 else if (invisible(mon))
                     map_invisible(mon->mx, mon->my);
             }
-            if (you && In_sokoban(&u.uz))
+            if (you && Sokoban)
                 change_luck(-1);        /* Sokoban guilt */
 
             boolean hityou = FALSE;
@@ -2406,10 +2388,6 @@ do_genocide(struct monst *mon, int how, boolean known_cursed)
                 done(GENOCIDED, killer);
         }
 
-        /* While endgame messages track whether you genocided
-           by means other than looking at u.uconduct, call
-           break_conduct anyway to correctly note the first turn
-           in which it happened. */
         if (you)
             break_conduct(conduct_genocide);
         update_inventory();     /* in case identified eggs were affected */
@@ -2512,7 +2490,8 @@ mon_choose_genocide(struct monst *mon, boolean class, int cur_try)
             continue;
         if (class && mon->data->mlet == mtmp->data->mlet)
             continue;
-        if (mm_aggression(mon, mtmp) && (msensem(mon, mtmp) & MSENSE_ANYVISION))
+        if (mm_aggression(mon, mtmp, TRUE) &&
+            (msensem(mon, mtmp) & MSENSE_ANYVISION))
             mndx[try++] = monsndx(mtmp->data);
         if (try > 4)
             return maybe_target_class(class, mndx[cur_try]);
@@ -2525,8 +2504,8 @@ mon_choose_genocide(struct monst *mon, boolean class, int cur_try)
         if (class && mon->data->mlet == mtmp->data->mlet)
             continue;
         /* not sensed only by warning, because that doesn't tell the mlet */
-        if (mm_aggression(mon, mtmp) && (msensem(mon, mtmp) &
-                                         (~MSENSE_ANYVISION & ~MSENSE_WARNING)))
+        if (mm_aggression(mon, mtmp, TRUE) &&
+            (msensem(mon, mtmp) & (~MSENSE_ANYVISION & ~MSENSE_WARNING)))
             mndx[try++] = monsndx(mtmp->data);
         if (try > 4)
             return maybe_target_class(class, mndx[cur_try]);
@@ -2728,7 +2707,7 @@ create_particular(const struct nh_cmd_arg *arg)
             } else {
                 mtmp = makemon(whichpm, level, u.ux, u.uy, NO_MM_FLAGS);
                 if ((makepeaceful || makehostile) && mtmp)
-                    msethostility(mtmp, !makepeaceful, TRUE);
+                    sethostility(mtmp, !makepeaceful, TRUE);
             }
             if (mtmp) {
                 madeany = TRUE;

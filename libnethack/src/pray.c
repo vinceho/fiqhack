@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-14 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-20 */
 /* Copyright (c) Benson I. Margulies, Mike Stephenson, Steve Linhart, 1989. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -604,7 +604,8 @@ at_your_feet(const char *str)
     } else {
         pline(msgc_youdiscover,
               "%s %s %s your %s!", str, Blind ? "lands" : vtense(str, "appear"),
-              Levitation ? "beneath" : "at", makeplural(body_part(FOOT)));
+              levitates(&youmonst) ? "beneath" : "at",
+              makeplural(body_part(FOOT)));
     }
 }
 
@@ -1092,7 +1093,7 @@ water_prayer(boolean bless_water)
             otmp->cursed = !bless_water;
             otmp->bknown = bc_known;
             if (bc_known)
-                makeknown(POT_WATER);
+                tell_discovery(otmp);
             changed += otmp->quan;
         } else if (otmp->oclass == POTION_CLASS)
             other = TRUE;
@@ -1278,7 +1279,7 @@ dosacrifice(const struct nh_cmd_arg *arg)
                     pline(msgc_levelwarning, "You have summoned %s!",
                           a_monnam(dmon));
                     if (sgn(u.ualign.type) == sgn(dmon->data->maligntyp))
-                        msethostility(dmon, FALSE, FALSE); /* TODO: reset? */
+                        sethostility(dmon, FALSE, FALSE); /* TODO: reset? */
                     pline(msgc_statusbad,
                           "You are terrified, and unable to move.");
                     helpless(3, hr_afraid, "being terrified of a demon",
@@ -1858,7 +1859,7 @@ mdoturn(struct musable *m)
             if (sp_no < MAXSPELL && spl_book[sp_no].sp_id == SPE_TURN_UNDEAD &&
                 spellknow(sp_no) > 0) {
                 m->spell = SPE_TURN_UNDEAD;
-                return spelleffects(TRUE, m);
+                return spelleffects(TRUE, m, FALSE);
             }
         }
 
@@ -1929,7 +1930,7 @@ mdoturn(struct musable *m)
                 case S_ZOMBIE:
                     if (u.ulevel >= xlev && !resist(&youmonst, mtmp, '\0', NOTELL, 0)) {
                         if (u.ualign.type == A_CHAOTIC)
-                            msethostility(mtmp, FALSE, TRUE);
+                            sethostility(mtmp, FALSE, TRUE);
                         else
                             killed(mtmp);
                         break;

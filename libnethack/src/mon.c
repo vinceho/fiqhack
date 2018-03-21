@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-15 */
+/* Last modified by Fredrik Ljungdahl, 2018-02-28 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -179,7 +179,7 @@ static const short cham_to_pm[] = {
                          /* intrinsics or spells */                     \
                          (mon)->mspells || any_property(mon) ||         \
                          (mon)->mhitinc || (mon)->mdaminc ||            \
-                         (mon)->mac)
+                         (mon)->mac || (mon)->angr || (mon)->master)
 
 /* Creates a monster corpse, a "special" corpse, or nothing if it doesn't
  * leave corpses.  Monsters which leave "special" corpses should have
@@ -344,19 +344,19 @@ make_corpse(struct monst *mtmp)
 int
 minliquid(struct monst *mtmp)
 {
-    boolean vis = canseemon(mtmp);
+    boolean vis = (level && canseemon(mtmp));
     boolean inpool, inlava, infountain;
 
-    inpool = is_pool(level, mtmp->mx, mtmp->my) && !flying(mtmp) &&
-        !levitates(mtmp) && !waterwalks(mtmp);
+    inpool = is_pool(level, mtmp->mx, mtmp->my) && !aboveliquid(mtmp) &&
+        !waterwalks(mtmp);
     /* Not waterwalks() for lava, the source might burn up... */
-    inlava = is_lava(level, mtmp->mx, mtmp->my) && !flying(mtmp) &&
+    inlava = is_lava(level, mtmp->mx, mtmp->my) && !aboveliquid(mtmp);
+    infountain = IS_FOUNTAIN(level->locations[mtmp->mx][mtmp->my].typ) &&
         !levitates(mtmp);
-    infountain = IS_FOUNTAIN(level->locations[mtmp->mx][mtmp->my].typ);
 
     /* Flying and levitation keeps our steed out of the liquid */
     /* (but not water-walking or swimming) */
-    if (mtmp == u.usteed && (Flying || Levitation))
+    if (mtmp == u.usteed && levfly_proper(&youmonst))
         return 0;
 
     /* Gremlin multiplying won't go on forever since the hit points keep going
@@ -370,7 +370,7 @@ minliquid(struct monst *mtmp)
     } else if (mtmp->data == &mons[PM_IRON_GOLEM] && inpool && !rn2(5)) {
         int dam = dice(2, 6);
 
-        if (cansee(mtmp->mx, mtmp->my))
+        if (level && cansee(mtmp->mx, mtmp->my))
             pline(mtmp->mtame ? msgc_petfatal : msgc_monneutral,
                   "%s rusts.", Monnam(mtmp));
         mtmp->mhp -= dam;
@@ -418,7 +418,7 @@ minliquid(struct monst *mtmp)
                     if (mtmp->mhp <= 0)
                         mondied(mtmp);
                 } else {
-                    if (cansee(mtmp->mx, mtmp->my))
+                    if (level && cansee(mtmp->mx, mtmp->my))
                         pline(mtmp->mtame ? msgc_petfatal : msgc_monneutral,
                               "%s %s.", Monnam(mtmp),
                               mtmp->data ==
@@ -457,7 +457,7 @@ minliquid(struct monst *mtmp)
            water damage to dead monsters' inventory, but survivors need to be
            handled here.  Swimmers are able to protect their stuff... */
         if (!is_clinger(mtmp->data) && !swims(mtmp)) {
-            if (cansee(mtmp->mx, mtmp->my) && !unbreathing(mtmp)) {
+            if (level && cansee(mtmp->mx, mtmp->my) && !unbreathing(mtmp)) {
                 pline(mtmp->mtame ? msgc_petfatal : msgc_monneutral,
                       "%s drowns.", Monnam(mtmp));
             }
@@ -588,6 +588,34 @@ mcalcmove(struct monst *mon)
                because mcalcmove now needs to be deterministic */
             mmove = (3 * mmove) / 2;
         }
+    }
+
+    if (mon == &youmonst) {
+        int wtcap = near_capacity();
+        switch (wtcap) {
+        case UNENCUMBERED:
+            break;
+        case SLT_ENCUMBER:
+            mmove -= (mmove / 4);
+            break;
+        case MOD_ENCUMBER:
+            mmove -= (mmove / 2);
+            break;
+        case HVY_ENCUMBER:
+            mmove -= ((mmove * 3) / 4);
+            break;
+        case EXT_ENCUMBER:
+            mmove -= ((mmove * 7) / 8);
+            break;
+        default:
+            break;
+        }
+
+        /* Avoid an infinite loop on corner cases (e.g. polyinit to blue
+           jelly), by limiting how long the player can be stuck without
+           movement points. */
+        if (mmove < 1)
+            mmove = 1;
     }
 
     return mmove;
@@ -1006,7 +1034,7 @@ mpickstuff(struct monst *mon, boolean autopickup)
     /* objects underwater can't be taken if flying, levitating
        or waterwalking */
     if (is_pool(mon->dlevel, mon->mx, mon->my) &&
-        (levitates(mon) || flying(mon) || waterwalks(mon)))
+        (aboveliquid(mon) || waterwalks(mon)))
         return FALSE;
 
     /* non-tame monsters normally don't go shopping */
@@ -1070,7 +1098,8 @@ mpickstuff_dopickup(struct monst *mon, struct obj *container, boolean autopickup
 
     boolean bag;
     boolean cursed_boh = FALSE; /* maybe zap cancellation later */
-    boolean found_castle_wand = FALSE; /* only ignore the first wishing wand in the castle chest */
+    /* only ignore the first wishing wand in the castle chest */
+    boolean found_castle_wand = FALSE;
     struct musable muse; /* unlocking tool, or cancellation for cursed BoH */
     init_musable(mon, &muse);
 
@@ -1080,17 +1109,13 @@ mpickstuff_dopickup(struct monst *mon, struct obj *container, boolean autopickup
         /* if this is a cursed BoH, 1/13 of the items vanishes, but only
            if the monster isn't levitating (otherwise it will unlevi before
            looting the bag) */
-        if (container && container->otyp == BAG_OF_HOLDING && container->cursed &&
-            !levitates(mon) && !rn2(13)) {
+        if (container && container->otyp == BAG_OF_HOLDING &&
+            container->cursed && !levitates(mon) && !rn2(13)) {
             obj_extract_self(obj);
             obfree(obj, NULL);
             vanish++;
             container->mbknown = 1; /* monster knows BUC now... */
             cursed_boh = TRUE;
-            if (canseemon(mon)) {
-                makeknown(BAG_OF_HOLDING);
-                container->bknown = 1; /* and so do you, if you saw it happen */
-            }
             continue;
         }
         /* For bags, monsters only loot them if they aren't already interested in
@@ -1150,17 +1175,21 @@ mpickstuff_dopickup(struct monst *mon, struct obj *container, boolean autopickup
             /* unblock point after extract, before pickup */
             if (obj->otyp == BOULDER)
                 unblock_point(obj->ox, obj->oy); /* vision */
-            mpickobj(mon, obj, pickobj ? &pickobj : NULL); /* may merge and free obj */
+            /* may merge and free obj */
+            mpickobj(mon, obj, pickobj ? &pickobj : NULL);
             newsym(mon->mx, mon->my);
         }
     }
     if (vanish) {
-        if (canseemon(mon))
+        if (canseemon(mon)) {
             pline(msgc_monneutral,
                   "You barely notice %s item%s disappearing!",
                   vanish > 5 ? "several" :
                   vanish > 1 ? "a few" :
                   "an", vanish != 1 ? "s" : "");
+            tell_discovery(container);
+            container->bknown = 1; /* and so do you, if you saw it happen */
+        }
         container->owt = weight(container);
     }
     if (picked || (container && !container->mknown)) {
@@ -1324,6 +1353,112 @@ can_carry(struct monst *mtmp, struct obj *otmp)
     if (curr_mon_load(mtmp) + newload > max_mon_load(mtmp))
         return FALSE;
 
+    return TRUE;
+}
+
+/* Returns monster that mon is tame to, or NULL if none or offlevel */
+struct monst *
+tame_to(const struct monst *mon)
+{
+    if (mon->mtame)
+        return &youmonst;
+    if (!mon->master)
+        return NULL;
+
+    return find_mid(mon->dlevel, mon->master, FM_FMON);
+}
+
+/* Makes pet tame to master. Returns FALSE if we failed to do so. */
+boolean
+mtamedog(struct monst *master, struct monst *pet, struct obj *obj)
+{
+    if (master == pet)
+        panic("mtamedog: making mon pet to itself?");
+    if (pet == &youmonst)
+        return FALSE; /* no */
+
+    /* avoid loops */
+    struct monst *pmon = master;
+    while (pmon) {
+        if (tame_to(pmon) == pet)
+            return FALSE;
+
+        pmon = tame_to(pmon);
+    }
+
+    /* pet fixup */
+    struct monst *pets_pet = NULL;
+    while (mnextpet(pet, &pets_pet)) {
+        msethostility(master, pets_pet, FALSE, TRUE);
+        sethostility(pets_pet,
+                     !(pet == &youmonst || pet->mpeaceful ||
+                       pet->mtame), TRUE);
+    }
+
+    if (master == &youmonst)
+        tamedog(pet, obj);
+    else {
+        if (obj)
+            panic("mtamedog with object isn't implemented for non-player");
+
+        pet->master = master->m_id;
+        sethostility(pet, !(master->mpeaceful || master->mtame), TRUE);
+    }
+
+    clear_pet_loops(pet);
+
+    if (tame_to(pet) == master)
+        return TRUE;
+    return FALSE;
+}
+
+/* Used to iterate through all pets to mon on the current level.
+   pet: NULL if we're starting the iteration, otherwise the next
+   pet in line. Returns FALSE once we run out of pets. */
+boolean
+mnextpet(const struct monst *master, struct monst **pet)
+{
+    if (!*pet) {
+        *pet = m_dlevel(master)->monlist;
+        if (*pet && tame_to(*pet) == master)
+            return TRUE;
+    }
+
+    while (*pet) {
+        *pet = (*pet)->nmon;
+        if (*pet && tame_to(*pet) == master)
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+/* Returns monster that mon is angry at, or NULL if none or offlevel */
+struct monst *
+angr_at(const struct monst *mon)
+{
+    if (!mon->angr)
+        return NULL;
+
+    return find_mid(mon->dlevel, mon->angr, FM_FMON);
+}
+
+/* Returns TRUE if adding an anger state would have an effect. */
+static boolean
+angr_useful(const struct monst *magr, const struct monst *mdef)
+{
+    if (!magr || !mdef || magr == mdef || (Conflict && magr != &youmonst))
+        return FALSE;
+
+    if (magr == &youmonst)
+        return (mdef->mpeaceful || mdef->mtame);
+    else if (mdef == &youmonst)
+        return (magr->mpeaceful && !magr->mtame);
+
+    int res = mm_aggression(magr, mdef, TRUE);
+    res &= mm_aggression(mdef, magr, TRUE);
+    if (res)
+        return FALSE;
     return TRUE;
 }
 
@@ -1621,21 +1756,17 @@ nexttry:       /* eels prefer the water, but if there is no water nearby, they
                 } else {
                     if (MON_AT(mlevel, nx, ny)) {
                         struct monst *mtmp2 = m_at(mlevel, nx, ny);
-                        long mmflag = flag | mm_aggression(mon, mtmp2);
+                        long mmflag = flag | mm_aggression(mon, mtmp2,
+                                                           Conflict);
 
                         swarmcount++;
 
                         if (!mtmp2->mpeaceful || mtmp2->mtame ||
                             !(mmflag & ALLOW_PEACEFUL) ||
                             mx_eshk(mtmp2) || mx_epri(mtmp2)) {
-                            if (!(mmflag & ALLOW_M))
+                            if (!(mmflag & ALLOW_MELEE))
                                 continue;
-                            info[cnt] |= ALLOW_M;
-                            if (mtmp2->mtame) {
-                                if (!(mmflag & ALLOW_TM))
-                                    continue;
-                                info[cnt] |= ALLOW_TM;
-                            }
+                            info[cnt] |= ALLOW_MELEE;
                         } else
                             info[cnt] |= ALLOW_PEACEFUL;
                     }
@@ -1693,7 +1824,7 @@ nexttry:       /* eels prefer the water, but if there is no water nearby, they
                              || (!flying(mon)
                                  && !levitates(mon)
                                  && !is_clinger(mdat))
-                             || In_sokoban(&u.uz))
+                             || Sokoban_lev(mlevel))
                             && (ttmp->ttyp != SLP_GAS_TRAP ||
                                 !immune_to_sleep(mon))
                             && (ttmp->ttyp != BEAR_TRAP ||
@@ -1754,7 +1885,7 @@ nexttry:       /* eels prefer the water, but if there is no water nearby, they
         int i;
         for (i = 0; i < oldcnt; i++) {
             if ((infocopy[i] &
-                 (ALLOW_MUXY | ALLOW_M | ALLOW_PEACEFUL))) {
+                 (ALLOW_MUXY | ALLOW_MELEE | ALLOW_PEACEFUL))) {
                 info[cnt] = infocopy[i];
                 poss[cnt] = posscopy[i];
                 cnt++;
@@ -1832,23 +1963,28 @@ do_grudge(const struct permonst *pm1, const struct permonst *pm2)
    that would attack them, unless pacifist. */
 long
 mm_aggression(const struct monst *magr, /* monster that might attack */
-              const struct monst *mdef) /* the monster it might attack  */
+              const struct monst *mdef, /* the monster it might attack */
+              boolean conflicted)
 {
     const struct permonst *ma = magr->data;
     const struct permonst *md = mdef->data;
+    long ret = ALLOW_M | ALLOW_MELEE | ALLOW_RANGED;
+
+    if (tame_to(magr) == mdef || tame_to(mdef) == magr)
+        return 0;
 
     /* magr or mdef as the player is a special case; not checking Conflict is
        correct, because it shouldn't suddenly warn you of peacefuls */
     if (magr == &youmonst)
         return (mdef->mpeaceful || !u.uconduct[conduct_killer])
-            ? 0 : (ALLOW_M | ALLOW_TM);
+            ? 0 : ret;
     if (mdef == &youmonst)
-        return magr->mpeaceful ? 0 : (ALLOW_M | ALLOW_TM);
+        return magr->mpeaceful ? 0 : ret;
 
     /* anti-stupidity checks moved here from dog_move, so that hostile monsters
        benefit from the improved AI when attacking pets too: */
 
-    if (!Conflict) {
+    if (!conflicted) {
         /* monsters have a 9/10 chance of rejecting an attack on a monster that
            would paralyze them; in a change from 3.4.3, they don't check whether
            a floating eye they're attacking is blind (because it's not obvious
@@ -1856,26 +1992,25 @@ mm_aggression(const struct monst *magr, /* monster that might attack */
            see invisible (can /you/ determine whether a floating eye can see
            invisible by looking at it?) */
         if (md == &mons[PM_FLOATING_EYE] && rn2(10) &&
-            !blind(magr) && haseyes(ma))
-            return 0;
+            !blind(magr) && haseyes(ma) && !reflecting(magr))
+            ret &= ~ALLOW_MELEE;
         if (md == &mons[PM_GELATINOUS_CUBE] && rn2(10))
-            return 0;
+            ret &= ~ALLOW_MELEE;
 
         /* monsters won't make an attack that would kill them with the passive
            damage they'd take in response */
         if (max_passive_dmg(mdef, magr) >= magr->mhp)
-            return 0;
+            ret &= ~ALLOW_MELEE;
 
         /* monsters won't make an attack that would petrify them */
         if (touch_petrifies(md) && !resists_ston(magr))
-            return 0;
+            ret &= ~ALLOW_MELEE;
         /* and for balance, the reverse */
         if (touch_petrifies(ma) && !resists_ston(mdef))
-            return 0;
+            ret &= ~ALLOW_MELEE;
 
-        /* tame monsters won't attack peaceful guardians or leaders, unless
-           conflicted */
-        if (magr->mtame && mdef->mpeaceful && !Conflict &&
+        /* tame monsters won't attack peaceful guardians or leaders */
+        if (magr->mtame && mdef->mpeaceful &&
             (md->msound == MS_GUARDIAN || md->msound == MS_LEADER))
             return 0;
 
@@ -1897,39 +2032,47 @@ mm_aggression(const struct monst *magr, /* monster that might attack */
          !(nonliving(mdef->data) || izombie(mdef))) ||
         ((pm_zombie(mdef->data) || izombie(mdef)) &&
          !(nonliving(magr->data) || izombie(magr))))
-        return ALLOW_M | ALLOW_TM;
+        return ret;
 
     /* dogs vs cats unless both are tame */
     if ((!magr->mtame || !mdef->mtame) &&
         is_domestic(magr->data) && is_domestic(mdef->data) &&
         ((magr->data->mlet == S_DOG && mdef->data->mlet == S_FELINE) ||
          (magr->data->mlet == S_FELINE && mdef->data->mlet == S_DOG)))
-        return ALLOW_M | ALLOW_TM;
+        return ret;
 
     /* pets attack hostile monsters */
     if (magr->mtame && !mdef->mpeaceful)
-        return ALLOW_M | ALLOW_TM;
+        return ret;
 
     /* and vice versa */
     if (mdef->mtame && !magr->mpeaceful)
-        return ALLOW_M | ALLOW_TM;
+        return ret;
 
     /* Player monsters heading for ascension attacks anything in its' way */
     if (magr->mstrategy == st_ascend)
-        return ALLOW_M | ALLOW_TM;
+        return ret;
 
     /* Since the quest guardians are under siege, it makes sense to have them
        fight hostiles.  (But don't put the quest leader in danger.) */
     if (ma->msound == MS_GUARDIAN && mdef->mpeaceful == FALSE)
-        return ALLOW_M | ALLOW_TM;
+        return ret;
     /* ... and vice versa */
     if (md->msound == MS_GUARDIAN && magr->mpeaceful == FALSE)
-        return ALLOW_M | ALLOW_TM;
+        return ret;
 
     /* Grudges */
     if (grudge(ma, md))
-        return ALLOW_M | ALLOW_TM;
+        return ret;
 
+    /* Monster anger targets */
+    if (angr_at(magr) == mdef || angr_at(mdef) == magr)
+        return ret;
+
+    /* Inherit master's aggressions */
+    struct monst *master = tame_to(magr);
+    if (master && master != &youmonst)
+        return mm_aggression(master, mdef, conflicted);
     return 0L;
 }
 
@@ -2143,7 +2286,6 @@ lifesaved_monster(struct monst *mtmp)
             pline(combat_msgc(mtmp, NULL, cr_hit),
                   "But wait...  %s medallion begins to glow!",
                   s_suffix(Monnam(mtmp)));
-            makeknown(AMULET_OF_LIFE_SAVING);
             if (attacktype(mtmp->data, AT_EXPL)
                 || attacktype(mtmp->data, AT_BOOM))
                 pline_implied(msgc, "%s reconstitutes!", Monnam(mtmp));
@@ -2152,6 +2294,7 @@ lifesaved_monster(struct monst *mtmp)
             else
                 pline_implied(msgc, "%s seems much better!", Monnam(mtmp));
             pline_implied(msgc, "The medallion crumbles to dust!");
+            tell_discovery(lifesave);
         }
         m_useup(mtmp, lifesave);
         mtmp->mcanmove = 1;
@@ -2496,8 +2639,7 @@ monstone(struct monst *mdef)
    monster; NULL is fine in those cases too, and will continue to be so.
 
    Handles: messages; corpses; dropping inventory; flagging the monster as dead
-   Does not (yet) handle: experience; mdef as the player
-   Does not happen: deathdrops of new items (those are for player kills only) */
+   Does not (yet) handle: mdef as the player */
 void
 monkilled(struct monst *magr, struct monst *mdef, const char *fltxt, int how)
 {
@@ -3141,6 +3283,61 @@ m_respond(struct monst *mtmp)
     }
 }
 
+/* Variant of sethostility that works on monsters */
+void
+msethostility(struct monst *offender, struct monst *victim,
+              boolean hostile, boolean adjust_malign)
+{
+    if (hostile && !angr_useful(offender, victim))
+        return;
+
+    if (offender == victim)
+        return;
+
+    if (hostile) {
+        if (tame_to(victim) == offender)
+            victim->master = 0;
+        if (tame_to(offender) == victim)
+            offender->master = 0;
+    }
+
+    /* pet fixup */
+    struct monst *pet = NULL;
+    while (mnextpet(victim, &pet))
+        msethostility(offender, pet, hostile, adjust_malign);
+
+    if (offender == &youmonst) {
+        sethostility(victim, hostile, adjust_malign);
+        return;
+    }
+
+    if (victim == &youmonst) {
+        /* also change peacefulness, but don't penalize you for it */
+        sethostility(offender, hostile, TRUE);
+        return;
+    }
+
+    /* Allow for limited multi-angering by making angerings two-way */
+
+    struct monst *oangr = angr_at(offender);
+    struct monst *vangr = angr_at(victim);
+
+    if (!hostile) {
+        if (oangr == victim)
+            victim->angr = 0;
+        if (vangr == offender)
+            victim->angr = 0;
+        return;
+    }
+
+    if (vangr == offender)
+        return;
+
+    if (oangr && oangr != victim && !vangr)
+        victim->angr = offender->m_id;
+    else
+        offender->angr = victim->m_id;
+}
 
 /* Marks a monster as peaceful (hostile = FALSE) or hostile (hostile = TRUE),
    while handling appropriate side effects (brandings, etc.); note that this
@@ -3159,8 +3356,13 @@ m_respond(struct monst *mtmp)
    For general angering when it's the player's fault (attacking a monster,
    etc.), see setmangry. */
 void
-msethostility(struct monst *mtmp, boolean hostile, boolean adjust_malign)
+sethostility(struct monst *mtmp, boolean hostile, boolean adjust_malign)
 {
+    /* pet fixup */
+    struct monst *pet = NULL;
+    while (mnextpet(mtmp, &pet))
+        sethostility(pet, hostile, adjust_malign);
+
     mtmp->mpeaceful = !hostile;
     mtmp->mtame = 0;
 
@@ -3169,6 +3371,40 @@ msethostility(struct monst *mtmp, boolean hostile, boolean adjust_malign)
 
     if (adjust_malign)
         set_malign(mtmp);
+}
+
+/* setmangry that works on monsters too */
+void
+msetmangry(struct monst *offender, struct monst *victim)
+{
+    if (!angr_useful(offender, victim))
+        return;
+
+    if (offender == &youmonst)
+        setmangry(victim);
+    else if (victim == &youmonst) {
+        if (offender->mpeaceful && !offender->mtame && !Conflict) {
+            sethostility(offender, TRUE, TRUE);
+            offender->mavenge = TRUE;
+            pline(msgc_consequence,
+                  "You feel aggravated at %s!", mon_nam(offender));
+        }
+    } else {
+        if (angr_at(victim) == offender || angr_at(offender) == victim)
+            return; /* already angry at this monster */
+
+        if (couldsee(victim->mx, victim->my)) {
+            /* use combat_msgc since the offender will probably be hit */
+            if (humanoid(victim->data) || mx_eshk(victim) || mx_egd(victim))
+                pline(combat_msgc(victim, offender, cr_hit),
+                      "%s angry at %s!", M_verbs(victim, "get"),
+                      mon_nam(offender));
+            else
+                growl(victim);
+        }
+
+        msethostility(offender, victim, TRUE, FALSE);
+    }
 }
 
 void
@@ -3180,7 +3416,26 @@ setmangry(struct monst *mtmp)
         return;
     if (mtmp->mtame)
         return;
-    msethostility(mtmp, TRUE, FALSE);
+    struct monst *master = tame_to(mtmp);
+    if (master) {
+        if (master->mtame) {
+            /* this is not ok */
+            pline(msgc_badidea, "%s doesn't appreciate it...",
+                  Monnam(mtmp));
+            if (u.ualign.record >= 0)
+                adjalign(-1);
+            else if (Luck >= 0)
+                change_luck(-1);
+            else {
+                /* set master to peaceful so we can anger it */
+                sethostility(master, FALSE, TRUE);
+                setmangry(master);
+                return;
+            }
+        }
+    }
+
+    sethostility(mtmp, TRUE, FALSE);
 
     if (ispriest(mtmp)) {
         if (p_coaligned(mtmp))
@@ -3208,7 +3463,7 @@ setmangry(struct monst *mtmp)
         for (mon = level->monlist; mon; mon = mon->nmon)
             if (!DEADMONSTER(mon) && mon->data == &pm_guardian &&
                 mon->mpeaceful) {
-                msethostility(mtmp, TRUE, FALSE);
+                sethostility(mtmp, TRUE, FALSE);
                 if (canseemon(mon))
                     ++got_mad;
             }
@@ -3218,6 +3473,9 @@ setmangry(struct monst *mtmp)
                   pm_guardian.mname : makeplural(pm_guardian.mname),
                   got_mad == 1 ? "s" : "");
     }
+
+    if (master && master->mpeaceful)
+        setmangry(master);
 }
 
 
@@ -3863,7 +4121,7 @@ angry_guards(boolean silent)
                 slct++;
                 mtmp->msleeping = mtmp->mfrozen = 0;
             }
-            msethostility(mtmp, TRUE, FALSE);
+            sethostility(mtmp, TRUE, FALSE);
         }
     }
     if (ct) {
@@ -3900,7 +4158,7 @@ pacify_guards(void)
             continue;
         if (mtmp->data == &mons[PM_WATCHMAN] ||
             mtmp->data == &mons[PM_WATCH_CAPTAIN])
-            msethostility(mtmp, FALSE, FALSE);
+            sethostility(mtmp, FALSE, FALSE);
     }
 }
 

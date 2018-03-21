@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-10 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-17 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -487,7 +487,7 @@ strategy(struct monst *mtmp, boolean magical_target)
        tracks. */
     if (can_track(mtmp->data) && chases_player) {
         coord *cp;
-        
+
         cp = gettrack(mtmp->mx, mtmp->my);
         if (cp) {
             mtmp->mstrategy = st_mon;
@@ -506,7 +506,7 @@ strategy(struct monst *mtmp, boolean magical_target)
         mtmp->mstrategy == st_wander || randcheck) {
         struct distmap_state ds;
         distmap_init(&ds, mtmp->mx, mtmp->my, mtmp);
-        
+
         /* Check to see if there are any items around that the monster might
            want. (This code was moved from monmove.c, and slightly edited;
            previously, monsters would interrupt chasing the player to look for
@@ -531,29 +531,33 @@ strategy(struct monst *mtmp, boolean magical_target)
                    item */
                 if (otmp->otyp == ROCK)
                     continue;
-                if (distmap(&ds, otmp->ox, otmp->oy) <= minr) {
-                    /* don't get stuck circling around an object that's
-                       underneath an immobile or hidden monster; paralysis
-                       victims excluded */
-                    if ((mtoo = m_at(mtmp->dlevel, otmp->ox, otmp->oy)) &&
-                        (mtoo->msleeping || mtoo->mundetected ||
-                         (mtoo->mappearance && !mtoo->iswiz) ||
-                         !mtoo->data->mmove))
-                        continue;
 
-                    if (((monster_would_take_item(mtmp, otmp) &&
-                          can_carry(mtmp, otmp)) ||
-                         ((Is_box(otmp) || otmp->otyp == ICE_BOX) &&
-                          !otmp->mknown && !nohands(mtmp->data) &&
-                          !is_animal(mtmp->data) &&
-                          !mindless(mtmp->data))) &&
-                        (throws_rocks(mtmp->data) ||
-                         !sobj_at(BOULDER, level, otmp->ox, otmp->oy)) &&
-                        !(onscary(otmp->ox, otmp->oy, mtmp))) {
-                        minr = distmap(&ds, otmp->ox, otmp->oy) - 1;
-                        gx = otmp->ox;
-                        gy = otmp->oy;
-                    }
+                /* don't get stuck circling around an object that's
+                   underneath an immobile or hidden monster; paralysis
+                   victims excluded */
+                if ((mtoo = m_at(mtmp->dlevel, otmp->ox, otmp->oy)) &&
+                    (mtoo->msleeping || mtoo->mundetected ||
+                     (mtoo->mappearance && !mtoo->iswiz) ||
+                     !mtoo->data->mmove))
+                    continue;
+
+                /* distmin is *much* faster than distmap, and distmap will never
+                   give a smaller result, so try distmin first. */
+                int curr;
+                if (((monster_would_take_item(mtmp, otmp) &&
+                      can_carry(mtmp, otmp)) ||
+                     ((Is_box(otmp) || otmp->otyp == ICE_BOX) &&
+                      !otmp->mknown && !nohands(mtmp->data) &&
+                      !is_animal(mtmp->data) &&
+                      !mindless(mtmp->data))) &&
+                    (throws_rocks(mtmp->data) ||
+                     !sobj_at(BOULDER, level, otmp->ox, otmp->oy)) &&
+                    !onscary(otmp->ox, otmp->oy, mtmp) &&
+                    distmin(mtmp->mx, mtmp->my, otmp->ox, otmp->oy) <= minr &&
+                    (curr = distmap(&ds, otmp->ox, otmp->oy)) <= minr) {
+                    minr = curr - 1;
+                    gx = otmp->ox;
+                    gy = otmp->oy;
                 }
             }
         }
@@ -621,7 +625,8 @@ tactics(struct monst *mtmp)
             if (DEADMONSTER(target))
                 continue;
 
-            if (mm_aggression(mtmp, target) && msensem(mtmp, target)) {
+            if (mm_aggression(mtmp, target, Conflict) &&
+                msensem(mtmp, target)) {
                 if (mclose > dist2(u.ux, u.uy, m_mx(target), m_my(target))) {
                     mclose = dist2(u.ux, u.uy, m_mx(target), m_my(target));
                     x = m_mx(target);
@@ -715,7 +720,8 @@ tactics(struct monst *mtmp)
                 if (DEADMONSTER(target))
                     continue;
 
-                if (mm_aggression(mtmp, target) && msensem(mtmp, target)) {
+                if (mm_aggression(mtmp, target, Conflict) &&
+                    msensem(mtmp, target)) {
                     x = m_mx(target);
                     y = m_my(target);
                     break;
@@ -758,7 +764,7 @@ clonewiz(void)
                  NO_MM_FLAGS)) != 0) {
         flags.double_troubled = TRUE;
         mtmp2->msleeping = 0;
-        msethostility(mtmp2, TRUE, FALSE); /* TODO: reset alignment? */
+        sethostility(mtmp2, TRUE, FALSE); /* TODO: reset alignment? */
         if (!Uhave_amulet && rn2(2)) {        /* give clone a fake */
             add_to_minv(mtmp2, mksobj(level, FAKE_AMULET_OF_YENDOR,
                                       TRUE, FALSE, rng_main), NULL);
@@ -784,26 +790,38 @@ int
 nasty(struct monst *mcast, coord bypos)
 {
     struct monst *mtmp;
-    struct monst *mtarget = m_at(level, bypos.x, bypos.y);
-    /* m_at doesn't work on you */
-    if (bypos.x == u.ux && bypos.y == u.uy)
-        mtarget = &youmonst;
+    struct monst *mtarget = um_at(level, bypos.x, bypos.y);
     int i, j, tmp;
     int castalign = (mcast ? mcast->data->maligntyp : -1);
     int count = 0;
     boolean you = (mcast && mcast == &youmonst);
     if (you)
         castalign = u.ualign.type;
-    boolean tame = (you || (mcast && mcast->mtame));
-    if (mtarget && (!mtarget->mpeaceful || mtarget->mtame)) {
-        /* create monsters hostile to the target */
-        tame = TRUE;
-        if (mtarget == &youmonst || mtarget->mpeaceful)
-            tame = FALSE;
+    int peace = 0;
+    if (you)
+        peace = 3;
+    else if (mcast && mcast->mtame)
+        peace = 2;
+    else if (mcast && mcast->mpeaceful)
+        peace = 1;
+    else
+        peace = 0;
+
+    boolean tame = FALSE;
+    if (mtarget) {
+        if (mcast && mcast->mpeaceful == mtarget->mpeaceful &&
+            !(mcast->mtame || you) == !mtarget->mtame)
+            tame = TRUE;
+        else {
+            if (!mtarget->mpeaceful)
+                peace = 1;
+            else
+                peace = 0;
+        }
     }
 
     if (!rn2(10) && Inhell) {
-        if (tame)
+        if (peace >= 2)
             demonpet();
         else
             msummon(mcast, &level->z);       /* summons like WoY */
@@ -844,25 +862,25 @@ nasty(struct monst *mcast, coord bypos)
                         &mons[makeindex]))
                 continue;
             mtmp = makemon(&mons[makeindex], level, bypos.x, bypos.y,
-                           tame ? MM_EDOG : NO_MM_FLAGS);
+                           (peace == 3) ? MM_EDOG : NO_MM_FLAGS);
             if (!mtmp) {
                 /* probably genocided, try a random monster */
                 mtmp = makemon(NULL, level, bypos.x, bypos.y,
-                               tame ? MM_EDOG : NO_MM_FLAGS);
+                               (peace == 3) ? MM_EDOG : NO_MM_FLAGS);
                 if (!mtmp) /* failed again? */
                     continue;
             }
             mtmp->msleeping = 0;
-            if (tame) {
+
+            if (tame)
+                mtamedog(mcast, mtmp, NULL);
+            else if (peace == 3)
                 initedog(mtmp);
-                set_malign(mtmp);
-                /* tame monsters drop items, ensure they don't drop weapon selection */
-                if (mtmp->mtame && attacktype(mtmp->data, AT_WEAP)) {
-                    mtmp->weapon_check = NEED_HTH_WEAPON;
-                    mon_wield_item(mtmp);
-                }
-            } else
-                msethostility(mtmp, TRUE, TRUE);
+            else
+                sethostility(mtmp, !peace, TRUE);
+
+            if (mtarget)
+                msethostility(mtarget, mtmp, TRUE, TRUE);
             newsym(mtmp->mx, mtmp->my);
             /* Give number of seen monsters to return later */
             if (canseemon(mtmp))
@@ -917,7 +935,7 @@ resurrect(void)
 
     if (mtmp) {
         mtmp->msleeping = 0;
-        msethostility(mtmp, TRUE, TRUE);
+        sethostility(mtmp, TRUE, TRUE);
         pline(msgc_npcvoice, "A voice booms out...");
         verbalize(msgc_npcanger,
                   "So thou thought thou couldst %s me, fool.", verb);

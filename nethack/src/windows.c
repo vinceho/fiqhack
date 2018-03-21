@@ -1,8 +1,9 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-04 */
 /* Copyright (c) Daniel Thaler, 2011.                             */
 /* NetHack may be freely redistributed.  See license for details. */
 
+#include "mail.h"
 #include "nhcurses.h"
 #include <signal.h>
 #include <locale.h>
@@ -583,7 +584,7 @@ draw_frame(void)
     int framewidth = !!ui_flags.draw_outer_frame_lines;
     int y = framewidth;
     int x = framewidth;
-    //int sidebar_delim = sidebar_delimiter_pos();
+    int sidebar_delim = sidebar_delimiter_pos();
     int connections[LINES+1]; /* for joining up vertical frames */
     int i;
     for (i = 0; i <= LINES; i++)
@@ -630,19 +631,39 @@ draw_frame(void)
         nh_mvwhline(basewin, y, x, ui_flags.mapwidth);
         if (ui_flags.current_followmode == FM_WATCH) {
             wattron(basewin, A_BOLD | COLOR_PAIR(4));
+            mvwprintw(basewin, y, 2, "WATCH MODE");
+
+            const char *delim = " (";
             const char *player = getenv("NH4SERVERUSER");
             if (!player || !*player)
                 player = getenv("USER");
-            if (!player || !*player)
-                player = "?";
+            if (player && *player) {
+                wprintw(basewin, "%swatching %s", delim, player);
+                delim = ", ";
+            }
 
-            mvwprintw(basewin, y, 2,
-                      "WATCH MODE (watching %s, 'm' to mail, 'q' to quit)",
-                      player);
+            char keybind[BUFSZ];
+            if (mail_filename(NULL) &&
+                (get_command_key("mail", keybind, FALSE) ||
+                 get_command_key("moveonly", keybind, FALSE))) {
+                wprintw(basewin, "%s'%s' to mail", delim, keybind);
+                delim = ", ";
+            }
+
+            if (get_command_key("save", keybind, FALSE) ||
+                get_command_key("drink", keybind, FALSE)) {
+                wprintw(basewin, "%s'%s' to stop watching", delim, keybind);
+                delim = ", ";
+            }
+
+            /* end parenthesis */
+            if (!strcmp(delim, ", "))
+                wprintw(basewin, ")");
             wattroff(basewin, A_BOLD | COLOR_PAIR(4));
         } else if (ui_flags.current_followmode == FM_REPLAY) {
             wattron(basewin, A_BOLD | COLOR_PAIR(4));
-            mvwaddstr(basewin, y, 2, "REPLAY MODE");
+            mvwprintw(basewin, y, 2, "REPLAY action %d/%d; next command: %s",
+                      player.action, player.max_action, player.cmd);
             wattroff(basewin, A_BOLD | COLOR_PAIR(4));
         }
         connections[y] |= 1;
@@ -654,7 +675,7 @@ draw_frame(void)
         }
     }
 
-    //connections[sidebar_delim] |= 2;
+    connections[sidebar_delim] |= 2;
 
     int rtee;
     for (i = 1; i <= LINES; i++) {

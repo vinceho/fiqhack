@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-14 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-15 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -2075,6 +2075,8 @@ readobjnam(char *bp, struct obj *no_wish, boolean from_user)
     int eroded, eroded2, erodeproof;
     int halfeaten, mntmp, contents;
     int islit, unlabeled, ishistoric, isdiluted;
+    int male = 0;
+    int female = 0;
     const struct alt_spellings *as = spellings;
     struct fruit *f;
     int ftype = gamestate.fruits.current;
@@ -2083,8 +2085,8 @@ readobjnam(char *bp, struct obj *no_wish, boolean from_user)
     /* Fruits may not mess up the ability to wish for real objects (since you
        can leave a fruit in a bones file and it will be added to another
        person's game), so they must be checked for last, after stripping all
-       the possible prefixes and seeing if there's a real name in there.  So we 
-       have to save the full original name.  However, it's still possible to do 
+       the possible prefixes and seeing if there's a real name in there.  So we
+       have to save the full original name.  However, it's still possible to do
        things like "uncursed burnt Alaska", or worse yet, "2 burned 5 course
        meals", so we need to loop to strip off the prefixes again, this time
        stripping only the ones possible on food. We could get even more
@@ -2352,6 +2354,7 @@ readobjnam(char *bp, struct obj *no_wish, boolean from_user)
         int l = 0;
         int of = 4;
         char *tmpp;
+        boolean last_was_gender = FALSE;
 
         p = bp;
         while (p != NULL) {
@@ -2376,6 +2379,10 @@ readobjnam(char *bp, struct obj *no_wish, boolean from_user)
                 } else if ((tmpp = strstri_mutable(p, ", "))) {
                     of = 2;
                     p = tmpp;
+                } else if (last_was_gender &&
+                           (tmpp = strstri_mutable(p, " "))) {
+                    of = 1;
+                    p = tmpp;
                 } else {
                     p = NULL;
                     break;
@@ -2383,10 +2390,33 @@ readobjnam(char *bp, struct obj *no_wish, boolean from_user)
             }
 
             l = 0;
+            last_was_gender = FALSE;
 
-            if ((mntmp = name_to_mon(p + of)) >= LOW_PM) {
+            int gend = 2;
+            if ((mntmp = gname_to_mon(p + of, &gend)) >= LOW_PM) {
+                if (gend != 2 && !male && !female) {
+                    if (gend == 0)
+                        male = 1;
+                    else if (gend == 1)
+                        female = 1;
+                }
+
                 *p = '\0';
                 p = NULL;
+            } else if (!strncmpi(p + of, "a male", l=6) ||
+                       !strncmpi(p + of, "male", l=4) ||
+                       !strncmpi(p + of, "a boy", l=5) ||
+                       !strncmpi(p + of, "boy", l=3)) {
+                male = 1;
+                female = 0;
+                last_was_gender = TRUE;
+            } else if (!strncmpi(p + of, "a female", l=8) ||
+                       !strncmpi(p + of, "female", l=6) ||
+                       !strncmpi(p + of, "a girl", l=6) ||
+                       !strncmpi(p + of, "girl", l=4)) {
+                female = 1;
+                male = 0;
+                last_was_gender = TRUE;
             } else if (!strncmpi(p + of, "fire", l=4)) {
                 props |= opm_fire;
             } else if (!strncmpi(p + of, "frost", l=5) ||
@@ -2766,7 +2796,7 @@ srch:
     }
 
     /* Let wizards wish for traps --KAA */
-    /* must come after objects check so wizards can still wish for trap objects 
+    /* must come after objects check so wizards can still wish for trap objects
        like beartraps */
     if (wizard && from_user) {
         int trap;
@@ -2821,7 +2851,7 @@ srch:
             level->locations[u.ux][u.uy].typ = LAVAPOOL;
             del_engr_at(level, u.ux, u.uy);
             pline(msgc_info, "A pool of molten lava.");
-            if (!(Levitation || Flying))
+            if (!aboveliquid(&youmonst))
                 lava_effects();
             newsym(u.ux, u.uy);
             return &zeroobj;
@@ -3001,9 +3031,14 @@ typfnd:
                        !(mvitals[mntmp].mvflags & G_NOCORPSE) &&
                        mons[mntmp].cnutrit != 0) {
                 otmp->corpsenm = mntmp;
+                otmp->spe &= ~OPM_GENDER;
                 if (mons[otmp->corpsenm].mflags2 & M2_FEMALE)
                     otmp->spe |= OPM_FEMALE;
                 else if (mons[otmp->corpsenm].mflags2 & M2_MALE)
+                    otmp->spe |= OPM_MALE;
+                else if (female)
+                    otmp->spe |= OPM_FEMALE;
+                else if (male)
                     otmp->spe |= OPM_MALE;
                 else
                     otmp->spe |= rn2(2) ? OPM_MALE : OPM_FEMALE;
@@ -3028,9 +3063,14 @@ typfnd:
                     otmp->corpsenm = genus(mntmp, 1);
                 else
                     otmp->corpsenm = mntmp;
+                otmp->spe &= ~OPM_GENDER;
                 if (mons[otmp->corpsenm].mflags2 & M2_FEMALE)
                     otmp->spe |= OPM_FEMALE;
                 else if (mons[otmp->corpsenm].mflags2 & M2_MALE)
+                    otmp->spe |= OPM_MALE;
+                else if (female)
+                    otmp->spe |= OPM_FEMALE;
+                else if (male)
                     otmp->spe |= OPM_MALE;
                 else
                     otmp->spe |= rn2(2) ? OPM_MALE : OPM_FEMALE;
@@ -3041,9 +3081,14 @@ typfnd:
             if (!(mons[mntmp].geno & G_UNIQ)
                 && !is_human(&mons[mntmp]))
                 otmp->corpsenm = mntmp;
+                otmp->spe &= ~OPM_GENDER;
                 if (mons[otmp->corpsenm].mflags2 & M2_FEMALE)
                     otmp->spe |= OPM_FEMALE;
                 else if (mons[otmp->corpsenm].mflags2 & M2_MALE)
+                    otmp->spe |= OPM_MALE;
+                else if (female)
+                    otmp->spe |= OPM_FEMALE;
+                else if (male)
                     otmp->spe |= OPM_MALE;
                 else
                     otmp->spe |= rn2(2) ? OPM_MALE : OPM_FEMALE;
@@ -3052,9 +3097,14 @@ typfnd:
             mntmp = can_be_hatched(mntmp);
             if (mntmp != NON_PM) {
                 otmp->corpsenm = mntmp;
+                otmp->spe &= ~OPM_GENDER;
                 if (mons[otmp->corpsenm].mflags2 & M2_FEMALE)
                     otmp->spe |= OPM_FEMALE;
                 else if (mons[otmp->corpsenm].mflags2 & M2_MALE)
+                    otmp->spe |= OPM_MALE;
+                else if (female)
+                    otmp->spe |= OPM_FEMALE;
+                else if (male)
                     otmp->spe |= OPM_MALE;
                 else
                     otmp->spe |= rn2(2) ? OPM_MALE : OPM_FEMALE;
@@ -3069,9 +3119,14 @@ typfnd:
             if (Has_contents(otmp) && verysmall(&mons[mntmp]))
                 delete_contents(otmp);  /* no spellbook */
             otmp->spe = (ishistoric ? OPM_HISTORIC : 0);
+            otmp->spe &= ~OPM_GENDER;
             if (mons[otmp->corpsenm].mflags2 & M2_FEMALE)
                 otmp->spe |= OPM_FEMALE;
             else if (mons[otmp->corpsenm].mflags2 & M2_MALE)
+                otmp->spe |= OPM_MALE;
+            else if (female)
+                otmp->spe |= OPM_FEMALE;
+            else if (male)
                 otmp->spe |= OPM_MALE;
             else
                 otmp->spe |= rn2(2) ? OPM_MALE : OPM_FEMALE;
@@ -3114,7 +3169,7 @@ typfnd:
             if (otmp->oprops) {
                 otmp->oprops = 0LLU;
                 while (!otmp->oprops)
-                    assign_oprops(level, otmp, rng_main, FALSE);
+                    assign_oprops(level, otmp, rng_main, TRUE);
                 props = otmp->oprops;
             }
         }

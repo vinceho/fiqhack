@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-13 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-21 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -386,8 +386,30 @@ maketrap(struct level *lev, int x, int y, int typ, enum rng rng)
     if (!oldplace) {
         ttmp->ntrap = lev->lev_traps;
         lev->lev_traps = ttmp;
-    }
+    } else if (Sokoban_lev(lev))
+        check_sokoban_completion(lev, FALSE);
+
     return ttmp;
+}
+
+/* Possibly unset sokoban rules if there's no pits/holes on the level.
+   silent is used when checking completion state on older saves. */
+void
+check_sokoban_completion(struct level *lev, boolean silent)
+{
+    if (!In_sokoban(&lev->z))
+        return;
+
+    struct trap *trap;
+    for (trap = lev->lev_traps; trap; trap = trap->ntrap)
+        if (trap->ttyp == PIT || trap->ttyp == HOLE)
+            return;
+
+    Sokoban_lev(lev) = FALSE;
+
+    if (!silent)
+        pline(lev == level ? msgc_levelsound : msgc_offlevel,
+              "You feel some arcane magic being lifted from the area.");
 }
 
 void
@@ -399,7 +421,7 @@ fall_through(boolean td)
     const char *msgbuf;
 
     /* KMH -- You can't escape the Sokoban level traps */
-    if (Blind && Levitation && !In_sokoban(&u.uz))
+    if (Blind && levitates(&youmonst) && !Sokoban)
         return;
 
     do
@@ -411,7 +433,7 @@ fall_through(boolean td)
         struct trap *t = t_at(level, u.ux, u.uy);
 
         seetrap(t);
-        if (!In_sokoban(&u.uz)) {
+        if (!Sokoban) {
             if (t->ttyp == TRAPDOOR)
                 pline(msgc_statusbad, "A trap door opens up under you!");
             else
@@ -420,10 +442,10 @@ fall_through(boolean td)
     } else
         pline(msgc_statusbad, "The %s opens up under you!", surface(u.ux, u.uy));
 
-    if (In_sokoban(&u.uz) && can_fall_thru(level))
+    if (Sokoban && can_fall_thru(level))
         ;
     /* KMH -- You can't escape the Sokoban level traps */
-    else if (Levitation || u.ustuck || !can_fall_thru(level)
+    else if (levitates(&youmonst) || u.ustuck || !can_fall_thru(level)
              || Flying || is_clinger(youmonst.data)
              || (Inhell && !u.uevent.invoked &&
                  newlevel == dunlevs_in_dungeon(&u.uz))) {
@@ -673,7 +695,7 @@ dotrap(struct trap *trap, unsigned trflags)
     action_interrupted();
 
     /* KMH -- You can't escape the Sokoban level traps */
-    if (In_sokoban(&u.uz) &&
+    if (Sokoban &&
         (ttype == PIT || ttype == SPIKED_PIT || ttype == HOLE ||
          ttype == TRAPDOOR)) {
         /* The "air currents" message is still appropriate -- even when the
@@ -684,12 +706,12 @@ dotrap(struct trap *trap, unsigned trflags)
               a_your[trap->madeby_u], trapexplain[ttype - 1]);
         /* then proceed to normal trap effect */
     } else if (already_seen) {
-        if ((Levitation || Flying) &&
+        if ((levitates(&youmonst) || Flying) &&
             (ttype == PIT || ttype == SPIKED_PIT || ttype == HOLE ||
              ttype == BEAR_TRAP)) {
             pline(msgc_actionboring, "You %s over %s %s.",
-                  Levitation ? "float" : "fly", a_your[trap->madeby_u],
-                  trapexplain[ttype - 1]);
+                  levitates(&youmonst) ? "float" : "fly",
+                  a_your[trap->madeby_u], trapexplain[ttype - 1]);
             return;
         }
         if (!Fumbling && ttype != MAGIC_PORTAL && ttype != VIBRATING_SQUARE &&
@@ -807,7 +829,7 @@ dotrap(struct trap *trap, unsigned trflags)
         break;
 
     case SQKY_BOARD:   /* stepped on a squeaky board */
-        if (Levitation || Flying) {
+        if (levitates(&youmonst) || Flying) {
             if (!Blind) {
                 seetrap(trap);
                 if (Hallucination)
@@ -825,7 +847,7 @@ dotrap(struct trap *trap, unsigned trflags)
         break;
 
     case BEAR_TRAP:
-        if (Levitation || Flying)
+        if (levitates(&youmonst) || Flying)
             break;
         seetrap(trap);
         if (amorphous(youmonst.data) || is_whirly(youmonst.data) ||
@@ -931,10 +953,10 @@ dotrap(struct trap *trap, unsigned trflags)
     case PIT:
     case SPIKED_PIT:
         /* KMH -- You can't escape the Sokoban level traps */
-        if (!In_sokoban(&u.uz) && (Levitation || Flying))
+        if (!Sokoban && (levitates(&youmonst) || Flying))
             break;
         seetrap(trap);
-        if (!In_sokoban(&u.uz) && is_clinger(youmonst.data)) {
+        if (!Sokoban && is_clinger(youmonst.data)) {
             if (trap->tseen) {
                 pline(msgc_playerimmune, "You see %s %spit below you.",
                       a_your[trap->madeby_u],
@@ -947,7 +969,7 @@ dotrap(struct trap *trap, unsigned trflags)
             }
             break;
         }
-        if (!In_sokoban(&u.uz)) {
+        if (!Sokoban) {
             const char *verbbuf;
 
             if (u.usteed) {
@@ -1071,7 +1093,7 @@ dotrap(struct trap *trap, unsigned trflags)
                              mx_name(u.usteed) ? ARTICLE_NONE : ARTICLE_THE,
                              "poor", SUPPRESS_SADDLE, FALSE));
             else
-                verbbuf = Levitation ? (const char *)"float" :
+                verbbuf = levitates(&youmonst) ? (const char *)"float" :
                     locomotion(youmonst.data, "stumble");
             pline(msgc_nonmonbad, "You %s into %s spider web!", verbbuf,
                   a_your[trap->madeby_u]);
@@ -1176,7 +1198,7 @@ dotrap(struct trap *trap, unsigned trflags)
                          NULL, SUPPRESS_SADDLE, FALSE));
         else
             verbbuf =
-                Levitation ? (const char *)"float" :
+                levitates(&youmonst) ? (const char *)"float" :
                 locomotion(youmonst.data, "step");
         if (Antimagic || Unchanging) {
             shieldeff(u.ux, u.uy);
@@ -1198,7 +1220,7 @@ dotrap(struct trap *trap, unsigned trflags)
         unsigned steed_mid = 0;
         struct obj *saddle = 0;
 
-        if (Levitation || Flying) {
+        if (levitates(&youmonst) || Flying) {
             if (!already_seen && rn2(3))
                 break;
             seetrap(trap);
@@ -1469,6 +1491,8 @@ launch_obj(short otyp, int x1, int y1, int x2, int y2, int style)
         if (otyp == BOULDER) {
             You_hear(msgc_levelsound, Hallucination ? "someone bowling." :
                      "rumbling in the distance.");
+            if (canhear())
+                explain_msg(MSGH_BOULDERTRAP, 0);
         }
         style &= ~LAUNCH_UNSEEN;
         goto roll;
@@ -1673,6 +1697,81 @@ seetrap(struct trap *trap)
     }
 }
 
+/* Returns 0 if there isn't a trap, we don't know about it, or it's harmless.
+   Returns 1 if the trap is potentially harmful.
+   Returns -1 if the trap is potentially harmful to our items. */
+int
+known_harmful_trap(const struct monst *mon, int x, int y)
+{
+    struct level *lev = m_dlevel(mon);
+    struct trap *trap = t_at(lev, x, y);
+    if (!trap)
+        return 0;
+    if (mon == &youmonst && !trap->tseen)
+        return 0;
+    if (mon != &youmonst &&
+        !(mon->mtrapseen & (1 << (trap->ttyp - 1))))
+        return 0;
+
+    switch (trap->ttyp) {
+    case BEAR_TRAP:
+        if (flying(mon) || levitates(mon) || amorphous(mon->data) ||
+            is_whirly(mon->data) || unsolid(mon->data) ||
+            ((mon != &youmonst || !u.usteed) && mon->data->msize <= MZ_SMALL))
+            return 0;
+        return 1;
+    case PIT:
+    case SPIKED_PIT:
+        if (phasing(mon))
+            return 0; /* even overrides Sokoban magic */
+        /* fallthrough */
+    case HOLE:
+    case TRAPDOOR:
+        if (Sokoban_lev(lev))
+            return 1;
+        /* fallthrough */
+    case SQKY_BOARD:
+        if (flying(mon) || levitates(mon))
+            return 0;
+        return 1;
+    case SLP_GAS_TRAP:
+        if (immune_to_sleep(mon) || breathless(mon->data))
+            return 0;
+        return 1;
+    case RUST_TRAP:
+        if (waterproof(mon))
+            return 0;
+        return -1;
+    case FIRE_TRAP:
+        if (!immune_to_fire(mon))
+            return 1;
+        if (ehas_property(mon, FIRE_RES))
+            return 0;
+        return -1;
+    case TELEP_TRAP:
+    case LEVEL_TELEP:
+    case ANTI_MAGIC:
+    case POLY_TRAP:
+        if (resists_magm(mon))
+            return 0;
+        return 1;
+    case MAGIC_PORTAL:
+    case VIBRATING_SQUARE:
+        return 0;
+    case WEB:
+        if (amorphous(mon->data) || is_whirly(mon->data) ||
+            unsolid(mon->data) || acidic(mon->data) ||
+            mon->data == &mons[PM_FIRE_ELEMENTAL] ||
+            webmaker(mon->data) ||
+            (m_mwep(mon) && m_mwep(mon)->oartifact == ART_STING))
+            return 0;
+        return 1;
+    default:
+        return 1;
+    }
+
+    /* NOTREACHED */ return 1;
+}
 
 static int
 mkroll_launch(struct trap *ttmp, struct level *lev, xchar x, xchar y,
@@ -1820,7 +1919,7 @@ mintrap(struct monst *mtmp)
     } else {
         int tt = trap->ttyp;
         boolean in_sight, tear_web, see_it, inescapable =
-            ((tt == HOLE || tt == PIT) && In_sokoban(&u.uz) && !trap->madeby_u);
+            ((tt == HOLE || tt == PIT) && Sokoban && !trap->madeby_u);
         const char *fallverb;
 
         /* true when called from dotrap, inescapable is not an option */
@@ -2280,9 +2379,11 @@ mintrap(struct monst *mtmp)
                           "KAABLAMM!!!  %s triggers %s land mine!",
                           Monnam(mtmp), a_your[trap->madeby_u]);
                 }
-                if (!in_sight)
+                if (!in_sight) {
                     pline(msgc_levelsound,
                           "Kaablamm!  You hear an explosion in the distance!");
+                    explain_msg(MSGH_LANDMINE, 0);
+                }
                 blow_up_landmine(trap);
                 if (DEADMONSTER(mtmp))
                     trapkilled = TRUE;
@@ -2448,6 +2549,14 @@ float_up(struct monst *mon)
     enum msg_channel statusbad = you ? msgc_statusbad : msgc_monneutral;
     enum msg_channel yafm = you ? msgc_yafm : msgc_monneutral;
 
+    if (!levitates_proper(mon)) {
+        if (you) {
+            pline(msgc_statusgood, "You feel more buoyant.");
+            return TRUE;
+        }
+        return FALSE;
+    }
+
     if ((you && u.utrap) ||
         (!you && mon->mtrapped)) {
         struct trap *ttmp;
@@ -2525,7 +2634,7 @@ fill_pit(struct level *lev, int x, int y)
     }
 }
 
-int
+boolean
 float_down(struct monst *mon)
 {
     boolean vis = canseemon(mon);
@@ -2543,7 +2652,15 @@ float_down(struct monst *mon)
               (Flying) ? "You feel less buoyant, but you are still %s." :
               "You float down, but you are still %s.",
               is_animal(u.ustuck->data) ? "swallowed" : "engulfed");
-        return 1;
+        return TRUE;
+    }
+
+    if (!levitation_useful(mon)) {
+        if (you) {
+            pline(msgc_statusend, "You feel less buoyant.");
+            return TRUE;
+        }
+        return FALSE;
     }
 
     /* Don't print "you float gently..." if it's actually violent. */
@@ -2585,7 +2702,8 @@ float_down(struct monst *mon)
            message below.  Thus, we want to avoid printing confusing, duplicate
            or out-of-order messages. Use knowledge of the two routines as a
            hack -- this should really be handled differently -dlc */
-        if (is_pool(level, m_mx(mon), m_my(mon)) && !waterwalks(mon) && !swims(mon))
+        if (is_pool(level, m_mx(mon), m_my(mon)) && !waterwalks(mon) &&
+            !swims(mon))
             no_msg = (you ? drown() : minliquid(mon));
 
         if (is_lava(level, m_mx(mon), m_my(mon))) {
@@ -2609,7 +2727,7 @@ float_down(struct monst *mon)
         /* u.uinwater msgs already in spoteffects()/drown() */
         else if ((!you || !u.uinwater) && !no_msg) {
             if (!you || !in_steed_dismounting) {
-                boolean sokoban_trap = (In_sokoban(m_mz(mon)) && trap);
+                boolean sokoban_trap = (Sokoban_lev(m_dlevel(mon)) && trap);
 
                 if ((you || vis) && hallucinating(&youmonst)) {
                     if (you)
@@ -2685,8 +2803,8 @@ float_down(struct monst *mon)
         on_level(&u.uz, &current_dungeon_level))
         pickup(1, flags.interaction_mode);
     if (you || vis)
-        return 1;
-    return 0;
+        return TRUE;
+    return FALSE;
 }
 
 
@@ -2708,7 +2826,7 @@ dofiretrap(struct monst *mon, struct obj *box)
     if (is_pool(lev, box ? box->ox : m_mx(mon),
                 box ? box->oy : m_my(mon)) &&
         (!box || !(you ? carried(box) : mcarried(box)) ||
-         (!levitates(mon) && !flying(mon) && !waterwalks(mon)))) {
+         (!aboveliquid(mon) && !waterwalks(mon)))) {
         if (resists_fire(mon)) {
             if (you || vis)
                 pline(combat_msgc(NULL, mon, cr_immune),
@@ -2919,7 +3037,7 @@ domagictrap(struct monst *mon)
                         if (you || mon->mtame)
                             tamedog(mtmp, NULL);
                         else
-                            msethostility(mtmp, mon->mpeaceful, FALSE);
+                            sethostility(mtmp, mon->mpeaceful, FALSE);
                     }
                 }
             break;
@@ -3111,8 +3229,7 @@ water_damage(struct obj * obj, const char *ostr, boolean force)
                ((obj->otyp != OILSKIN_SACK &&
                  !(props & opm_oilskin)) ||
                 (obj->cursed && !rn2(3)))) {
-        water_damage_chain(obj->cobj, FALSE);
-        return 0;
+        return water_damage_chain(obj->cobj, FALSE);
     } else if (!force && mon && waterproof(mon))
         return 0;
     else if (!force && (Luck + 5) > rn2(20)) {
@@ -3140,9 +3257,12 @@ water_damage(struct obj * obj, const char *ostr, boolean force)
         }
     } else if (obj->oclass == POTION_CLASS) {
         if (obj->otyp == POT_ACID) {
-            if (vis)
-            pline(msgc_itemloss, "%s %s!",
-                  Shk_Your(obj), aobjnam(obj, "explode"));
+            if (vis) {
+                pline(msgc_itemloss, "%s %s!",
+                      Shk_Your(obj), aobjnam(obj, "explode"));
+                if (carried)
+                    tell_discovery(obj);
+            }
             delobj(obj);
             if (carried) {
                 int dmg = rnd(10);
@@ -3153,8 +3273,6 @@ water_damage(struct obj * obj, const char *ostr, boolean force)
                         dmg /= 2;
                 }
 
-                if (vis)
-                    makeknown(POT_ACID);
                 if (you) {
                     update_inventory();
                     losehp(dmg,
@@ -3199,16 +3317,25 @@ water_damage(struct obj * obj, const char *ostr, boolean force)
     return 0;
 }
 
-void
+/* Returns 0-2 like above for how things are affected. Something being
+   destroyed (returning 3) is treated as 2. */
+int
 water_damage_chain(struct obj *obj, boolean here)
 {
+    int top_res = 0;
+    int res = 0;
     struct obj *otmp;
 
     for (; obj; obj = otmp) {
         otmp = here ? obj->nexthere : obj->nobj;
 
-        water_damage(obj, NULL, FALSE);
+        res = water_damage(obj, NULL, FALSE);
+        top_res = max(top_res, res);
     }
+
+    if (top_res == 3)
+        top_res = 2;
+    return top_res;
 }
 
 /*
@@ -3638,7 +3765,7 @@ reward_untrap(struct trap *ttmp, struct monst *mtmp)
         if (rnl(10) < 8 && !mtmp->mpeaceful && !mtmp->msleeping &&
             !mtmp->mfrozen && !mindless(mtmp->data) &&
             mtmp->data->mlet != S_HUMAN) {
-            msethostility(mtmp, FALSE, TRUE);
+            sethostility(mtmp, FALSE, TRUE);
             pline(msgc_npcvoice, "%s is grateful.", Monnam(mtmp));
         }
         /* Helping someone out of a trap is a nice thing to do, A lawful may be
@@ -3730,8 +3857,8 @@ disarm_squeaky_board(struct trap *ttmp, schar dx, schar dy)
     if (obj->otyp == CAN_OF_GREASE) {
         consume_obj_charge(obj, TRUE);
     } else {
+        tell_discovery(obj);
         useup(obj);     /* oil */
-        makeknown(POT_OIL);
     }
     pline(msgc_actionok, "You repair %s squeaky board.",
           the_your[ttmp->madeby_u]);
@@ -3771,7 +3898,7 @@ try_lift(struct monst *mtmp, struct trap *ttmp, int wt, boolean stuff)
         if (!ttmp->madeby_u && !mtmp->mpeaceful && mtmp->mcanmove &&
             !mindless(mtmp->data) && mtmp->data->mlet != S_HUMAN &&
             rnl(10) < 3) {
-            msethostility(mtmp, FALSE, TRUE);
+            sethostility(mtmp, FALSE, TRUE);
             pline(msgc_npcvoice, "%s thinks it was nice of you to try.",
                   Monnam(mtmp));
         }
@@ -3805,7 +3932,7 @@ help_monster_out(struct monst *mtmp, struct trap *ttmp)
     if (check_capacity(NULL))
         return 1;
 
-    if (Levitation) {
+    if (levitates(&youmonst)) {
         pline(msgc_cancelled, "You cannot reach %s.", mon_nam(mtmp));
         return 0;
     }
@@ -3968,15 +4095,28 @@ untrap(const struct nh_cmd_arg *arg, boolean force)
     }
     /* end if */
     if (!dx && !dy) {
+        int boxes = 0;
+        char response = 0;
+        for (otmp = level->objects[x][y]; otmp; otmp = otmp->nexthere)
+            if (Is_box(otmp))
+                boxes++;
+
         for (otmp = level->objects[x][y]; otmp; otmp = otmp->nexthere)
             if (Is_box(otmp)) {
-                qbuf = msgprintf(
-                    "There is %s here. Check it for traps?",
-                    safe_qbuf("",
-                              sizeof ("There is  here. Check it for traps?"),
-                              doname(otmp), an(simple_typename(otmp->otyp)),
-                              "a box"));
-                switch (ynq(qbuf)) {
+                if (boxes != 1) {
+                    qbuf = msgprintf(
+                        "There is %s here. Check it for traps?",
+                        safe_qbuf("",
+                                  sizeof ("There is  here. "
+                                          "Check it for traps?"),
+                                  doname(otmp),
+                                  an(simple_typename(otmp->otyp)),
+                                  "a box"));
+                    response = ynq(qbuf);
+                } else
+                    response = 'y';
+
+                switch (response) {
                 case 'q':
                     return 0;
                 case 'n':
@@ -4400,6 +4540,8 @@ deltrap(struct level *lev, struct trap *trap)
         ttmp->ntrap = trap->ntrap;
     }
     dealloc_trap(trap);
+
+    check_sokoban_completion(lev, FALSE);
 }
 
 boolean

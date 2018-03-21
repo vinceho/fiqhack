@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-07 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-16 */
 /* Copyright (C) 1990 by Ken Arromdee                             */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -390,7 +390,7 @@ explode(int x, int y, int type, /* the same as in zap.c */
                             raylevel == P_UNSKILLED)
                             mlosexp(NULL, mtmp, "", FALSE);
                         else
-                            mdam = mtmp->mhp; /* instadeath */
+                            mdam = mtmp->mhp / 2 + dice(6, 6);
                     }
                     mtmp->mhp -= mdam;
                     mtmp->mhp -= (idamres + idamnonres);
@@ -426,7 +426,7 @@ explode(int x, int y, int type, /* the same as in zap.c */
                    (adtyp == AD_DRST && resists_poison(&youmonst)) ||
                    (adtyp == AD_ACID && resists_acid(&youmonst))) {
             pline(combat_msgc(NULL, &youmonst, cr_resist),
-                  "You resist %s%s", expl_needs_the ? "the " : "", dispbuf);
+                  "You resist %s%s.", expl_needs_the ? "the " : "", dispbuf);
             if (adtyp != AD_SLEE)
                 damu = (damu + 1) / 2;
         }
@@ -440,15 +440,14 @@ explode(int x, int y, int type, /* the same as in zap.c */
                     raylevel == P_UNSKILLED) {
                     losexp("drained by a death field",FALSE);
                     damu = 0;
-                } else {
-                    done(DIED, "killed by a death field");
-                    damu = 0; /* lifesaved */
-                }
+                } else
+                    damu = (Upolyd ? u.mh : u.uhp) / 2 + dice(6, 6);
             }
         }
         if (adtyp == AD_FIRE)
             burnarmor(&youmonst);
-        int item_dmg = destroy_mitem(&youmonst, ALL_CLASSES, (int)adtyp, &killer);
+        int item_dmg = destroy_mitem(&youmonst, ALL_CLASSES, (int)adtyp,
+                                     &killer);
         damu += item_dmg;
 
         ugolemeffects((int)adtyp, damu);

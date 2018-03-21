@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-13 */
+/* Last modified by Fredrik Ljungdahl, 2018-02-27 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -80,7 +80,7 @@ give_may_advance_msg(int skill)
           P_LAST_SPELL ? "spell casting " : "fighting ");
 }
 
-
+static int check_weapon_skill(boolean);
 static boolean could_advance(int);
 static boolean peaked_skill(int);
 static int slots_required(int);
@@ -986,6 +986,18 @@ static const struct skill_range {
 int
 enhance_weapon_skill(const struct nh_cmd_arg *arg)
 {
+    return check_weapon_skill(FALSE);
+}
+
+int
+enhance_weapon_skill_notime(const struct nh_cmd_arg *arg)
+{
+    return check_weapon_skill(TRUE);
+}
+
+static int
+check_weapon_skill(boolean readonly)
+{
     int pass, i, n, len, longest, id, to_advance, eventually_advance,
         maxxed_cnt;
     const int *selected;
@@ -993,9 +1005,7 @@ enhance_weapon_skill(const struct nh_cmd_arg *arg)
     struct nh_menulist menu;
     boolean speedy = FALSE;
 
-    (void) arg;
-
-    if (wizard && yn("Advance skills without practice?") == 'y')
+    if (!readonly && wizard && yn("Advance skills without practice?") == 'y')
         speedy = TRUE;
 
     do {
@@ -1097,6 +1107,14 @@ enhance_weapon_skill(const struct nh_cmd_arg *arg)
         n = display_menu(&menu, buf, to_advance ? PICK_ONE : PICK_NONE,
                          PLHINT_ANYWHERE, &selected);
         if (n == 1) {
+            if (readonly) {
+                pline(msgc_mispaste, "You can't enhance skills while %s.",
+                      program_state.followmode == FM_WATCH ? "watching" :
+                      program_state.followmode == FM_REPLAY ? "replaying" :
+                      "using this command");
+                break;
+            }
+
             n = selected[0] - 1;        /* get item selected */
             skill_advance(n);
             /* check for more skills able to advance, if so then .. */
@@ -1132,7 +1150,7 @@ dump_skills(void)
             if (i == skill_ranges[pass].first)
                 add_menuheading(&menu, skill_ranges[pass].name);
 
-            if (P_RESTRICTED(i) || u.weapon_skills[i].skill == P_UNSKILLED)
+            if (P_RESTRICTED(i) || P_SKILL(i) == P_UNSKILLED)
                 continue;
 
             buf = msgprintf(" %s\t[%s]", P_NAME(i),
@@ -1493,7 +1511,7 @@ skill_init(const struct def_skill *class_skill)
         P_SKILL(P_ATTACK_SPELL) = P_BASIC;
         P_SKILL(P_ENCHANTMENT_SPELL) = P_BASIC;
     }
-    
+
     /* set wand skills */
     if (!Role_if(PM_BARBARIAN) && !Role_if(PM_CAVEMAN))
         P_SKILL(P_WANDS) = P_BASIC;
@@ -1516,10 +1534,8 @@ skill_init(const struct def_skill *class_skill)
     if (urole.petnum == PM_PONY)
         P_SKILL(P_RIDING) = P_BASIC;
 
-    /* 
-     * Make sure we haven't missed setting the max on a skill
-     * & set advance
-     */
+    /* Make sure we haven't missed setting the max on a skill, and set
+       advance. */
     for (skill = 0; skill < P_NUM_SKILLS; skill++) {
         if (!P_RESTRICTED(skill)) {
             if (P_MAX_SKILL(skill) < P_SKILL(skill)) {
@@ -1547,4 +1563,3 @@ setmnotwielded(struct monst *mon, struct obj *obj)
 }
 
 /*weapon.c*/
-

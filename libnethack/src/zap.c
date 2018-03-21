@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-12 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -137,18 +137,16 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                     pline(msgc_yafm, "%s %sself!", M_verbs(mdef, "bash"),
                           hityou ? "your" : mhim(mdef));
             }
-            if (hityou) {
-                const char *kbuf;
-                kbuf = msgprintf("%s%s %s", yours ? mhis(magr) : s_suffix(k_monnam(magr)),
-                                yours ? " own" : "", zap_type_text);
-                losehp(dmg, killer_msg(DIED, kbuf));
-            } else {
-                if (resist(magr, mdef, otmp->oclass, TELL, bcsign(otmp)))
-                    dmg = dmg / 2 + 1;
-                mdef->mhp -= dmg;
-                if (mdef->mhp <= 0)
-                    monkilled(magr, mdef, "", AD_RBRE);
-            }
+
+            const char *kbuf;
+            kbuf = msgprintf("%s%s %s", yours ? umhis(magr) :
+                             s_suffix(k_monnam(magr)),
+                             yours ? " own" : "", zap_type_text);
+
+            if (!hityou && resist(magr, mdef, otmp->oclass, TELL, bcsign(otmp)))
+                dmg = dmg / 2 + 1;
+
+            mlosehp(magr, mdef, dmg, "", AD_RBRE, killer_msg(DIED, kbuf));
         } else
             miss(zap_type_text, mdef, magr);
         known = TRUE;
@@ -422,7 +420,7 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                     newsym(mdef->mx, mdef->my);
                 } else
                     mimic_hit_msg(mdef, otyp);
-            } else
+            } else if (mdef == &youmonst || canseemon(mdef))
                 pline(msgc_actionok, "%s %s%s better.", Monnam(mdef),
                       mfeel(mdef),
                       otyp == SPE_EXTRA_HEALING ? " much" : "");
@@ -569,8 +567,10 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
                 m_respond(mdef);
                 if (mx_eshk(mdef) && !*u.ushops)
                     hot_pursuit(mdef);
-            } else
+            } else {
                 mdef->msleeping = 0;
+                msetmangry(magr, mdef);
+            }
         } else if (mdef->m_ap_type)
             seemimic(mdef);     /* might unblock if mimicing a boulder/door */
     }
@@ -584,7 +584,7 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
     }
     if (known && useen && tseen &&
         (otmp->oclass == WAND_CLASS || otmp->oclass == POTION_CLASS))
-        makeknown(otyp);
+        tell_discovery(otmp);
     return 0;
 }
 
@@ -765,6 +765,7 @@ montraits(struct obj *obj, coord * cc)
         /* the corpse may have been moved, set the monster's location from the
            corpse's location */
         mtmp2->dlevel = object_dlevel(obj);
+        clear_pet_loops(mtmp2);
         replmon(mtmp, mtmp2);
     }
     return mtmp2;
@@ -884,6 +885,7 @@ revive(struct obj *obj)
                 xy.x = x;
                 xy.y = y;
                 mtmp = montraits(obj, &xy);
+                mx_ecache_new(mtmp);
                 if (mtmp && mtmp->mtame && !isminion(mtmp))
                     wary_dog(mtmp, TRUE);
             } else
@@ -970,6 +972,7 @@ revive(struct obj *obj)
             }
         }
     }
+
     return mtmp;
 }
 
@@ -1382,7 +1385,7 @@ poly_obj(struct obj *obj, int id)
         return obj;
     }
 
-    if (obj->otyp == BOULDER && In_sokoban(&u.uz))
+    if (obj->otyp == BOULDER && Sokoban)
         change_luck(-1);        /* Sokoban guilt */
     if (id == STRANGE_OBJECT) { /* preserve symbol */
         int try_limit = 3;
@@ -1773,7 +1776,8 @@ bhito(struct obj *obj, struct obj *otmp)
     } else if (obj == uchain) {
         if (otmp->otyp == WAN_OPENING || otmp->otyp == SPE_KNOCK) {
             unpunish();
-            makeknown(otmp->otyp);
+            if (otmp->oclass != SPBOOK_CLASS)
+                tell_discovery(otmp);
         } else
             res = 0;
     } else
@@ -1797,8 +1801,9 @@ bhito(struct obj *obj, struct obj *otmp)
                 boxlock(obj, otmp);
 
             if (obj_shudders(obj)) {
-                if (cansee(obj->ox, obj->oy))
-                    makeknown(otmp->otyp);
+                if (cansee(obj->ox, obj->oy) &&
+                    otmp->oclass != SPBOOK_CLASS)
+                    tell_discovery(otmp);
                 do_osshock(obj);
                 break;
             }
@@ -1833,12 +1838,12 @@ bhito(struct obj *obj, struct obj *otmp)
                     /* view contents (not recursively) */
                     for (o = obj->cobj; o; o = o->nobj)
                         o->dknown = 1;  /* "seen", even if blind */
-                    display_cinventory(obj);
+                    container_contents(obj, FALSE, FALSE, TRUE);
                 }
                 res = 1;
             }
             if (res)
-                makeknown(WAN_PROBING);
+                tell_discovery(otmp);
             break;
         case WAN_STRIKING:
         case SPE_FORCE_BOLT:
@@ -1854,7 +1859,8 @@ bhito(struct obj *obj, struct obj *otmp)
                 res = 0;
             }
             /* BUG[?]: shouldn't this depend upon you seeing it happen? */
-            makeknown(otmp->otyp);
+            if (otmp->oclass != SPBOOK_CLASS)
+                tell_discovery(otmp);
             break;
         case WAN_CANCELLATION:
         case SPE_CANCELLATION:
@@ -1893,8 +1899,8 @@ bhito(struct obj *obj, struct obj *otmp)
                 res = boxlock(obj, otmp);
             else
                 res = 0;
-            if (res /* && otmp->oclass == WAND_CLASS */ )
-                makeknown(otmp->otyp);
+            if (res && otmp->oclass != SPBOOK_CLASS)
+                tell_discovery(otmp);
             break;
         case WAN_MAKE_INVISIBLE: /* no effect on objects */
         case WAN_SLOW_MONSTER:
@@ -1962,7 +1968,7 @@ bhitpile_post(struct monst *mon, struct obj *obj, int x, int y)
         if (t && t->ttyp == STATUE_TRAP && activate_statue_trap(t, x, y, TRUE)
             && obj->otyp == WAN_STRIKING &&
             (mon == &youmonst || cansee(x, y)))
-            makeknown(obj->otyp);
+            tell_discovery(obj);
     }
 
     poly_zapped = -1;
@@ -2117,8 +2123,9 @@ zapnodir(struct monst *mon, struct obj *obj)
         }
         break;
     }
-    if (known && !objects[obj->otyp].oc_name_known) {
-        makeknown(obj->otyp);
+    if (known && !objects[obj->otyp].oc_name_known &&
+        obj->oclass != SPBOOK_CLASS) {
+        tell_discovery(obj);
         more_experienced(0, 10);
     }
 }
@@ -2216,15 +2223,16 @@ zap_steed(struct obj *obj)
          */
     case WAN_PROBING:
         probe_monster(u.usteed);
-        makeknown(WAN_PROBING);
+        tell_discovery(obj);
         steedhit = TRUE;
         break;
     case WAN_TELEPORTATION:
     case SPE_TELEPORT_AWAY:
         /* you go together */
         tele();
-        if (Teleport_control || (ox != u.ux && oy != u.uy))
-            makeknown(obj->otyp);
+        if ((Teleport_control || (ox != u.ux && oy != u.uy)) &&
+            obj->oclass != SPBOOK_CLASS)
+            tell_discovery(obj);
         steedhit = TRUE;
         break;
 
@@ -2283,7 +2291,7 @@ cancel_monst(struct monst *mdef, struct obj *obj, struct monst *magr,
     if (obj->oclass == WAND_CLASS)
         skill = getwandlevel(magr, obj);
     else if (obj->oclass == SPBOOK_CLASS)
-        skill = mprof(magr, MP_SMATR);
+        skill = MP_SKILL(magr, P_MATTER_SPELL);
 
     if (vis)
         pline(combat_msgc(magr, mdef, cr_hit),
@@ -2472,7 +2480,7 @@ zap_updown(struct monst *mon, struct obj *obj, schar dz)
                 } else if (you || vis)
                     pline(msgc_yafm, "Blood %ss %s your %s.",
                           is_lava(level, u.ux, u.uy) ? "boil" : "pool",
-                          Levitation ? "beneath" : "at",
+                          levitates(&youmonst) ? "beneath" : "at",
                           makeplural(body_part(FOOT)));
             }
         }
@@ -2531,6 +2539,7 @@ void
 weffects(struct monst *mon, struct obj *obj, schar dx, schar dy, schar dz)
 {
     int otyp = obj->otyp;
+    int oclass = obj->oclass;
     int wandlevel = 0;
     boolean you = (mon == &youmonst);
     boolean vis = canseemon(mon);
@@ -2540,7 +2549,8 @@ weffects(struct monst *mon, struct obj *obj, schar dx, schar dy, schar dz)
         use_skill(P_WANDS, wandlevel); /* successful wand use exercises */
     boolean disclose = FALSE, was_unkn = !objects[otyp].oc_name_known;
 
-    if (!dx && !dy && !dz && objects[otyp].oc_dir == IMMEDIATE) { /* zapped self */
+    if (!dx && !dy && !dz && objects[otyp].oc_dir == IMMEDIATE) {
+        /* zapped self */
         bhitm(mon, mon, obj, 7);
         return;
     }
@@ -2572,11 +2582,7 @@ weffects(struct monst *mon, struct obj *obj, schar dx, schar dy, schar dz)
             int divisor = 2;
             int wandlvl = 0;
             if (otyp == SPE_MAGIC_MISSILE) {
-                int skill;
-                if (you)
-                    skill = P_SKILL(P_ATTACK_SPELL);
-                else
-                    skill = mprof(mon, MP_SATTK);
+                int skill = MP_SKILL(mon, P_ATTACK_SPELL);
                 divisor = (skill == P_UNSKILLED ? 5 :
                            skill == P_BASIC ? 4 :
                            skill == P_SKILLED ? 3 :
@@ -2603,7 +2609,12 @@ weffects(struct monst *mon, struct obj *obj, schar dx, schar dy, schar dz)
                        objects[otyp].oc_dir);
         disclose = TRUE;
     }
-    if (disclose && (you || vis) && was_unkn) {
+
+    /* TODO: figure out a good way to do tell_discovery -- we can't do so
+       unconditionally because obj may no longer exist
+       (obj zaps priest, god smites you with lightning, lightning destroys
+       the wand) */
+    if (disclose && (you || vis) && was_unkn && oclass != SPBOOK_CLASS) {
         makeknown(otyp);
         more_experienced(0, 10);
     }
@@ -2796,8 +2807,8 @@ bhit_at(struct monst *mon, struct obj *obj, int x, int y, int range)
         case SPE_KNOCK:
             if (is_db_wall(oldx, oldy)) {
                 if (cansee(x, y) || cansee(oldx, oldy))
-                    if (vis)
-                        makeknown(obj->otyp);
+                    if (vis && obj->oclass != SPBOOK_CLASS)
+                        tell_discovery(obj);
                 open_drawbridge(x, y);
             }
             break;
@@ -2805,16 +2816,16 @@ bhit_at(struct monst *mon, struct obj *obj, int x, int y, int range)
         case SPE_WIZARD_LOCK:
             if ((cansee(x, y) || cansee(oldx, oldy))
                 && lev->locations[x][y].typ == DRAWBRIDGE_DOWN)
-                if (you || vis)
-                    makeknown(obj->otyp);
+                if ((you || vis) && obj->oclass != SPBOOK_CLASS)
+                    tell_discovery(obj);
             close_drawbridge(x, y);
             break;
         case WAN_STRIKING:
         case SPE_FORCE_BOLT:
             if (typ != DRAWBRIDGE_UP)
                 destroy_drawbridge(x, y);
-            if (you || vis)
-                makeknown(obj->otyp);
+            if ((you || vis) && obj->oclass != SPBOOK_CLASS)
+                tell_discovery(obj);
             break;
         }
     }
@@ -2832,8 +2843,8 @@ bhit_at(struct monst *mon, struct obj *obj, int x, int y, int range)
         case WAN_STRIKING:
         case SPE_FORCE_BOLT:
             if (doorlock(obj, x, y)) {
-                if (vis)
-                    makeknown(obj->otyp);
+                if (vis && obj->oclass != SPBOOK_CLASS)
+                    tell_discovery(obj);
                 if (lev->locations[x][y].flags == D_BROKEN &&
                     *in_rooms(lev, x, y, SHOPBASE)) {
                     ret |= BHIT_SHOPDAM;
@@ -2844,17 +2855,21 @@ bhit_at(struct monst *mon, struct obj *obj, int x, int y, int range)
         }
     }
 
-    /* Object/monster handling. First bhitpile_pre sets a flag for objects to be hit,
-       then bhitm affects monsters at the tile, then bhitpile_post finishes the work.
-       However, to avoid race conditions with autopickup, teleportation magic hits
-       objects first. */
-    if (obj->otyp == WAN_TELEPORTATION || obj->otyp == SPE_TELEPORT_AWAY) {
+    struct monst *mdef = um_at(lev, x, y);
+
+    /* Object/monster handling. First bhitpile_pre sets a flag for objects to be
+       hit, then bhitm affects monsters at the tile, then bhitpile_post finishes
+       the work. However, to avoid race conditions with autopickup,
+       teleportation magic hits objects first. This also happens if wands hit
+       the player, since the game always end immediately if we die, and we don't
+       want to leave stale to_be_hit flags. */
+    if (obj->otyp == WAN_TELEPORTATION || obj->otyp == SPE_TELEPORT_AWAY ||
+        mdef == &youmonst) {
         if (bhitpile(mon, obj, x, y))
             ret |= BHIT_OBJ;
     } else
         bhitpile_pre(mon, obj, x, y);
 
-    struct monst *mdef = um_at(lev, x, y);
     if (mdef) {
         if (!canseemon(mdef) && cansee(x, y))
             map_invisible(x, y);
@@ -2863,8 +2878,7 @@ bhit_at(struct monst *mon, struct obj *obj, int x, int y, int range)
     } else if ((mdef = vismon_at(lev, x, y)))
         ret |= BHIT_DMON;
 
-    if (obj->otyp != WAN_TELEPORTATION && obj->otyp != SPE_TELEPORT_AWAY &&
-        bhitpile_post(mon, obj, x, y))
+    if (bhitpile_post(mon, obj, x, y))
         ret |= BHIT_OBJ;
 
     /* Is the rest of the range obstructed? */
@@ -3148,9 +3162,12 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
     struct obj *otmp;
 
     /* we need to figure out BUC for potential wand for resist() */
-    int wandlevel = P_SKILL(P_WANDS);
-    if (magr && magr != &youmonst)
-        wandlevel = mprof(magr, MP_WANDS);
+    int wandlevel;
+    if (magr)
+        wandlevel = MP_SKILL(magr, P_WANDS);
+    else
+        wandlevel = P_BASIC;
+
     if (raylevel)
         bcsign = raylevel - wandlevel;
 
@@ -3482,13 +3499,7 @@ zap_hit_mon(struct monst *magr, struct monst *mdef, int type,
     if (!tmp)
         return;
 
-    if (you)
-        losehp(tmp, killer_msg(DIED, an(fltxt)));
-    else {
-        mdef->mhp -= tmp;
-        if (mdef->mhp <= 0)
-            monkilled(magr, mdef, fltxt, AD_RBRE);
-    }
+    mlosehp(magr, mdef, tmp, fltxt, AD_RBRE, killer_msg(DIED, an(fltxt)));
     return;
 }
 
@@ -3794,7 +3805,7 @@ void
 fracture_rock(struct obj *obj)
 {
     /* A little Sokoban guilt... */
-    if (obj->otyp == BOULDER && In_sokoban(&u.uz) && !flags.mon_moving)
+    if (obj->otyp == BOULDER && Sokoban && !flags.mon_moving)
         change_luck(-1);
 
     obj->otyp = ROCK;
@@ -4019,9 +4030,7 @@ resist(const struct monst *magr, const struct monst *mdef,
     case WAND_CLASS:
         alev = 12;
         if (magr) {
-            int wandlevel = P_SKILL(P_WANDS);
-            if (magr != &youmonst)
-                wandlevel = mprof(magr, MP_WANDS);
+            int wandlevel = MP_SKILL(magr, P_WANDS);
             wandlevel += buc;
             alev = (wandlevel == P_UNSKILLED ? 5 :
                     wandlevel == P_BASIC ? 10 :
@@ -4142,13 +4151,9 @@ retry:
 
 int
 getwandlevel(const struct monst *user, struct obj *obj) {
-    int wandlevel;
-    if (user == &youmonst) {
-        wandlevel = P_SKILL(P_WANDS);
-        if (!wandlevel) /* restricted users would return a 0 */
-            wandlevel++;
-    } else
-        wandlevel = mprof(user, MP_WANDS);
+    int wandlevel = MP_SKILL(user, P_WANDS);
+    if (!wandlevel) /* restricted users would return a 0 */
+        wandlevel++;
 
     /* wandlevel is 0-5 depending on skill + BUC combination */
     if (!obj || obj->oclass != WAND_CLASS) {

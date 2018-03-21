@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-28 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -20,6 +20,7 @@ static void m_initgrp(struct monst *, struct level *lev, int, int, int, int);
 static void m_initthrow(struct monst *, int, int, enum rng);
 static void m_initweap(struct level *lev, struct monst *, enum rng);
 static void m_initinv(struct monst *, enum rng);
+static void assign_skills(struct monst *, int);
 static void assign_spells(struct monst *, enum rng);
 
 struct monst zeromonst; /* only address matters, value is irrelevant */
@@ -770,6 +771,7 @@ clone_mon(struct monst *mon, xchar x, xchar y)
 
     m2->minvent = NULL; /* objects don't clone */
     m2->mextra = NULL; /* created later if necessary */
+    mx_ecache_new(m2);
     m2->mleashed = FALSE;
     /* Max HP the same, but current HP halved for both.  The caller might want
        to override this by halving the max HP also. When current HP is odd, the
@@ -945,9 +947,15 @@ makemon(const struct permonst *ptr, struct level *lev, int x, int y,
     else if (mndx == quest_info(MS_NEMESIS))
         ptr = &pm_nemesis;
 
+    if (is_mplayer(ptr) && !(mmflags & MM_PLAYERMONST))
+        return mk_mplayer(ptr, lev, x, y,
+                          !!(In_endgame(&(lev->z)) || In_hell(&(lev->z))),
+                          stats_rng, mmflags);
+
     propagate(mndx, countbirth, FALSE);
 
     mtmp = newmonst();
+    mx_ecache_new(mtmp);
     if (mmflags & MM_EDOG)
         mx_edog_new(mtmp);
     else if (mmflags & MM_EMIN)
@@ -1014,7 +1022,7 @@ makemon(const struct permonst *ptr, struct level *lev, int x, int y,
     /* In sokoban, peaceful monsters are generally worse for the player
        than hostile ones, so don't make them peaceful there.  Make an
        exception to this for particularly nasty monsters. */
-    mtmp->mpeaceful = ((In_sokoban(&lev->z) && !extra_nasty(mtmp->data) &&
+    mtmp->mpeaceful = ((Sokoban_lev(lev) && !extra_nasty(mtmp->data) &&
                         !always_peaceful(mtmp->data)) ?
                        FALSE : (mmflags & MM_ANGRY) ?
                        FALSE : peace_minded(ptr));
@@ -1153,6 +1161,8 @@ makemon(const struct permonst *ptr, struct level *lev, int x, int y,
         }
     }
 
+    assign_skills(mtmp, 0);
+
     mtmp->mspells = 0;
     assign_spells(mtmp, stats_rng);
 
@@ -1219,6 +1229,30 @@ create_critters(int cnt, const struct permonst *mptr, int x, int y)
     return known;
 }
 
+/* Assign skills based on the permonst. start is used if we're appending new
+   skills for a monster. */
+static void
+assign_skills(struct monst *mon, int start)
+{
+    int i;
+    for (i = start; i < P_NUM_SKILLS; i++) {
+        MP_SKILL(mon, i) = P_ISRESTRICTED;
+        MP_MAX_SKILL(mon, i) = mprof(mon->data, i);
+        if (MP_MAX_SKILL(mon, i) == P_UNSKILLED)
+            MP_MAX_SKILL(mon, i) = P_ISRESTRICTED;
+        MP_ADVANCE(mon, i) = 0;
+
+        if (mon != &youmonst)
+            MP_SKILL(mon, i) = mprof(mon->data, i);
+        else if (MP_MAX_SKILL(mon, i) != P_ISRESTRICTED)
+            MP_SKILL(mon, i) = P_UNSKILLED; /* good enough */
+
+        if (MP_SKILL(mon, i) != P_ISRESTRICTED)
+            MP_ADVANCE(mon, i) =
+                practice_needed_to_advance(MP_SKILL(mon, i) - 1);
+    }
+}
+
 /* Assign spells based on proficiencies */
 static void
 assign_spells(struct monst *mon, enum rng rng)
@@ -1239,6 +1273,10 @@ assign_spells(struct monst *mon, enum rng rng)
         /* fallthrough */
     case PM_BARROW_WIGHT:
         mon_addspell(mon, SPE_SLEEP);
+        return;
+    case PM_NURSE:
+        mon_addspell(mon, SPE_HEALING);
+        mon_addspell(mon, SPE_EXTRA_HEALING);
         return;
     case PM_SHOPKEEPER:
         if (rn2_on_rng(3, rng))
@@ -1365,7 +1403,7 @@ assign_spells(struct monst *mon, enum rng rng)
 
     /* Failsafe: if the monster has at least Basic in attack school,
        give force bolt for free */
-    if (mprof(mon, MP_SATTK) >= P_BASIC)
+    if (MP_SKILL(mon, P_ATTACK_SPELL) >= P_BASIC)
         mon_addspell(mon, SPE_FORCE_BOLT);
 
     /*
@@ -1390,7 +1428,7 @@ assign_spells(struct monst *mon, enum rng rng)
     while (i-- > 0) {
         /* FIXME: make first_spell/etc... */
         spell = rn1(SPE_BLANK_PAPER - SPE_DIG, SPE_DIG);
-        addspell_prob = mprof(mon, mspell_skilltype(spell));
+        addspell_prob = MP_SKILL(mon, spell_skilltype(spell));
         addspell_prob *= 3;
         addspell_prob -= objects[spell].oc_level;
         if (rn2_on_rng(6, rng) <= addspell_prob) {
@@ -1499,7 +1537,7 @@ rndmonst_inner(const d_level *dlev, char class, int flags, enum rng rng)
             ptr = NULL;                                /* wrong monster class */
         if (ptr && geno & (G_NOGEN | G_UNIQ))
             ptr = NULL;              /* monsters that don't randomly generate */
-        if (is_mplayer(ptr) && rn2_on_rng(20, rng))
+        if (is_mplayer(ptr) && rn2_on_rng(2, rng))
             ptr = NULL;            /* player monsters are extra rare */
         if (ptr && rogue && !class && !isupper(def_monsyms[(int)(ptr->mlet)]))
             ptr = NULL;            /* lowercase or punctuation on Rogue level */
@@ -2014,7 +2052,7 @@ bagotricks(struct obj *bag)
     } else {
         consume_obj_charge(bag, TRUE);
         if (create_critters(!rn2(23) ? rn1(7, 2) : 1, NULL, u.ux, u.uy))
-            makeknown(BAG_OF_TRICKS);
+            tell_discovery(bag);
     }
 }
 
@@ -2051,6 +2089,7 @@ restore_mon(struct memfile *mf, struct monst *mtmp, struct level *l)
         mon->dlevel = l;
     } else
         mon = mtmp;
+    mx_ecache_new(mon);
 
     idx = mread32(mf);
     switch (idx) {
@@ -2151,8 +2190,21 @@ restore_mon(struct memfile *mf, struct monst *mtmp, struct level *l)
         mon->pw = mread32(mf);
         mon->pwmax = mread32(mf);
 
+        int skill_amount = mread8(mf);
+        for (i = 0; i < skill_amount; i++) {
+            MP_SKILL(mon, i) = mread8(mf);
+            MP_MAX_SKILL(mon, i) = mread8(mf);
+            MP_ADVANCE(mon, i) = mread16(mf);
+        }
+
+        if (skill_amount < P_NUM_SKILLS && mon->data)
+            assign_skills(mon, skill_amount);
+
+        mon->angr = mread32(mf);
+        mon->master = mread32(mf);
+
         /* Some reserved space for further expansion */
-        for (i = 0; i < 186; i++)
+        for (i = 0; i < 177; i++)
             (void) mread8(mf);
     }
 
@@ -2444,8 +2496,18 @@ save_mon(struct memfile *mf, const struct monst *mon, const struct level *l)
     mwrite32(mf, mon->mstuck);
     mwrite32(mf, mon->pw);
     mwrite32(mf, mon->pwmax);
+    mwrite8(mf, P_NUM_SKILLS);
 
-    for (i = 0; i < 186; i++)
+    for (i = 0; i < P_NUM_SKILLS; i++) {
+        mwrite8(mf, MP_SKILL(mon, i));
+        mwrite8(mf, MP_MAX_SKILL(mon, i));
+        mwrite16(mf, MP_ADVANCE(mon, i));
+    }
+
+    mwrite32(mf, mon->angr);
+    mwrite32(mf, mon->master);
+
+    for (i = 0; i < 177; i++)
         mwrite8(mf, 0);
 
     /* just mark that the pointers had values */

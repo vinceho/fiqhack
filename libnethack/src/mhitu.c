@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-28 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-04 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -16,7 +16,7 @@ static int passiveum(const struct permonst *, struct monst *,
 static void mayberem(struct obj *, const char *);
 
 static boolean diseasemu(const struct permonst *, const char *);
-static int hitmu(struct monst *, const struct attack *);
+static int hitmu(struct monst *, const struct attack *, int);
 static int gulpmu(struct monst *, const struct attack *);
 static int explmu(struct monst *, const struct attack *);
 static void missmu(struct monst *, boolean, const struct attack *);
@@ -316,10 +316,11 @@ mattacku(struct monst *mtmp)
             i = mattackm(mtmp, u.usteed);
             if ((i & MM_AGR_DIED))
                 return 1;
-            if (i & MM_DEF_DIED || u.umoved)
+            if ((i & MM_DEF_DIED) || u.umoved)
                 return 0;
             /* Let your steed retaliate */
-            if ((mm_aggression(u.usteed, mtmp) & ALLOW_M))
+            if (u.usteed &&
+                (mm_aggression(u.usteed, mtmp, Conflict) & ALLOW_MELEE))
                 return !!(mattackm(u.usteed, mtmp) & MM_DEF_DIED);
             return 0;
         }
@@ -468,6 +469,7 @@ mattacku(struct monst *mtmp)
 
     /* Work out the armor class differential   */
     tmp = AC_VALUE(find_mac(&youmonst)) + 10; /* tmp ~= 0 - 20 */
+    int ac_after_rnd = tmp;
     tmp += mtmp->m_lev;
     if (u_helpless(hm_all))
         tmp += 4;
@@ -538,7 +540,7 @@ mattacku(struct monst *mtmp)
                 if (tmp > (j = rnd(20 + i))) {
                     if (mattk->aatyp != AT_KICK ||
                         !thick_skinned(youmonst.data))
-                        sum[i] = hitmu(mtmp, mattk);
+                        sum[i] = hitmu(mtmp, mattk, ac_after_rnd);
                 } else
                     missmu(mtmp, (tmp == j), mattk);
             }
@@ -547,7 +549,7 @@ mattacku(struct monst *mtmp)
         case AT_HUGS:  /* automatic if prev two attacks succeed */
             if ((!ranged && i >= 2 && sum[i - 1] && sum[i - 2])
                 || mtmp == u.ustuck)
-                sum[i] = hitmu(mtmp, mattk);
+                sum[i] = hitmu(mtmp, mattk, ac_after_rnd);
             break;
 
         case AT_GAZE:  /* can affect you either ranged or not */
@@ -618,7 +620,7 @@ mattacku(struct monst *mtmp)
                     mswingsm(mtmp, &youmonst, otmp);
                 }
                 if (tmp > (j = dieroll = rnd(20 + i)))
-                    sum[i] = hitmu(mtmp, mattk);
+                    sum[i] = hitmu(mtmp, mattk, ac_after_rnd);
                 else
                     missmu(mtmp, (tmp == j), mattk);
                 /* KMH -- Don't accumulate to-hit bonuses */
@@ -634,9 +636,14 @@ mattacku(struct monst *mtmp)
         /* give player a chance of waking up before dying -kaa */
         if (sum[i] == 1) {      /* successful attack */
             if (u_helpless(hm_asleep) &&
-                turnstate.helpless_timers[hr_asleep] < moves && !rn2(10))
-                cancel_helplessness(hm_asleep,
-                                    "The combat suddenly awakens you.");
+                turnstate.helpless_timers[hr_asleep]) {
+                int awakening = rnd(5);
+                if (turnstate.helpless_timers[hr_asleep] <= awakening)
+                    cancel_helplessness(hm_asleep,
+                                        "The combat suddenly awakens you.");
+                else
+                    turnstate.helpless_timers[hr_asleep] -= awakening;
+            }
         }
         if (sum[i] == 2)
             return 1;   /* attacker dead */
@@ -783,7 +790,7 @@ magic_negation(struct monst *mon)
  *            attacking you
  */
 static int
-hitmu(struct monst *mtmp, const struct attack *mattk)
+hitmu(struct monst *mtmp, const struct attack *mattk, int ac_after_rnd)
 {
     const struct permonst *mdat = mtmp->data;
     int uncancelled;
@@ -1033,7 +1040,7 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
                general very good at considering height--most short monsters
                still _can_ attack you when you're flying or mounted. [TODO:
                why can't a flying attacker overcome this?] */
-            if (u.usteed || Levitation || Flying) {
+            if (u.usteed || levitates(&youmonst) || Flying) {
                 pline(combat_msgc(mtmp, &youmonst, cr_immune),
                       "%s tries to reach your %s %s!", Monnam(mtmp), sidestr,
                       body_part(LEG));
@@ -1307,7 +1314,7 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
                 if (u.uhp > u.uhpmax)
                     u.uhp = u.uhpmax;
             }
-            
+
             /* Don't have the same message in these cases; they can be
                distinguished anyway from the message line, belong in different
                channels, and the channel shouldn't really be a spoiler */
@@ -1318,9 +1325,9 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
                 pline(msgc_statusheal, "%s hits!  (I hope you don't mind.)",
                       Monnam(mtmp));
             else
-                pline(msgc_monneutral, "%s hits!  (But nothing happpened?)",
+                pline(msgc_monneutral, "%s hits!  (But nothing happened?)",
                       Monnam(mtmp));
-            
+
             if (!rn2(3))
                 exercise(A_STR, TRUE);
             if (!rn2(3))
@@ -1338,7 +1345,6 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
             }
             dmg = 0;
             passiveum(olduasmon, mtmp, mattk);
-            
         } else {
             if (Role_if(PM_HEALER)) {
                 if (!(moves % 5))
@@ -1516,8 +1522,8 @@ hitmu(struct monst *mtmp, const struct attack *mattk)
 
     /* Negative armor class reduces damage done instead of fully protecting
        against hits. */
-    if (dmg && find_mac(&youmonst) < 0) {
-        dmg -= rnd(-find_mac(&youmonst));
+    if (dmg && ac_after_rnd < 0) {
+        dmg += AC_VALUE(ac_after_rnd);
         if (dmg < 1)
             dmg = 1;
     }
@@ -2093,14 +2099,15 @@ doseduce(struct monst *mon)
                               ("\"That  looks pretty.  May I have it?\""),
                               xname(ring), simple_typename(ring->otyp),
                               "ring"));
-                makeknown(RIN_ADORNMENT);
-                if (yn(qbuf) == 'n')
+                if (yn(qbuf) == 'n') {
+                    tell_discovery(ring);
                     continue;
+                }
             } else
                 pline(msgc_itemloss,
                       "%s decides she'd like your %s, and takes it.",
                       Blind ? "She" : Monnam(mon), xname(ring));
-            makeknown(RIN_ADORNMENT);
+            tell_discovery(ring);
             unwield_silently(ring);
             setunequip(ring);
             freeinv(ring);
@@ -2120,16 +2127,17 @@ doseduce(struct monst *mon)
                                           "you wear it for me?\""),
                               xname(ring), simple_typename(ring->otyp),
                               "ring"));
-                makeknown(RIN_ADORNMENT);
-                if (yn(qbuf) == 'n')
+                if (yn(qbuf) == 'n') {
+                    tell_discovery(ring);
                     continue;
+                }
             } else {
                 pline(msgc_statusbad,
                       "%s decides you'd look prettier wearing your %s,",
                       Blind ? "He" : Monnam(mon), xname(ring));
                 pline(msgc_statusbad, "and puts it on your finger.");
             }
-            makeknown(RIN_ADORNMENT);
+            tell_discovery(ring);
             if (!uright) {
                 pline_implied(msgc_info, "%s puts %s on your right %s.",
                               Blind ? "He" : Monnam(mon), the(xname(ring)),

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-13 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-17 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -236,35 +236,35 @@ fightm(struct monst *mon)
     int dirx[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
     int diry[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
 
-    /* try each in a random order, so do a shuffle */
-    int try[8] = {0, 1, 2, 3, 4, 5, 6, 7};
-    int i, old, change;
-    for (i = 0; i < 8; i++) {
-        change = rn2(8);
-        old = try[i];
-        try[i] = try[change];
-        try[change] = old;
-    }
-
     /* check for monsters on positions */
-    struct monst *mtmp;
-    int x, y;
+    struct monst *mtmp = NULL;
+    int x, y, i;
+    int nummon = 0;
+    struct monst *mdef = NULL;
     for (i = 0; i < 8; i++) {
-        x = mon->mx + dirx[try[i]];
-        y = mon->my + diry[try[i]];
+        x = mon->mx + dirx[i];
+        y = mon->my + diry[i];
+        if (!isok(x, y))
+            continue;
+
         mtmp = m_at(level, x, y);
-        if (!mtmp || (!mm_aggression(mon, mtmp) && !conflicted &&
+        if (!mtmp || (!mm_aggression(mon, mtmp, Conflict) && !conflicted &&
                       !mercy))
             continue;
         if (mercy && mon->mpeaceful != (mtmp == &youmonst ? 1 :
                                         mtmp->mpeaceful))
             continue;
 
+        if (!rn2(++nummon))
+            mdef = mtmp;
+    }
+
+    if (mdef) {
         /* TODO: why are these needed... */
-        bhitpos.x = mtmp->mx;
-        bhitpos.y = mtmp->my;
+        bhitpos.x = mdef->mx;
+        bhitpos.y = mdef->my;
         notonhead = 0; /* what if it is? */
-        result = mattackm(mon, mtmp);
+        result = mattackm(mon, mdef);
 
         /* For engulfers, a spent turn also gives an opportunity to continue
            hitting the hero (digestion, cold attacks, whatever) */
@@ -281,12 +281,13 @@ fightm(struct monst *mon)
            since this is no longer exclusively called by conflict */
         if ((result & MM_HIT) && !(result & MM_DEF_DIED)) {
             notonhead = 0;
-            mattackm(mtmp, mon); /* retaliation */
+            mattackm(mdef, mon); /* retaliation */
         }
 
         /* Turn is spent, so return 1. This used to return 0 if the attack was
-           a miss or if the monster has you engulfed, but missing attacks shouldn't
-           allow further movement, and engulfement is taken care of above */
+           a miss or if the monster has you engulfed, but missing attacks
+           shouldn't allow further movement, and engulfement is taken care of
+           above */
         return 1;
     }
     return 0; /* no suitable target */
@@ -721,12 +722,12 @@ gazemm(struct monst *magr, struct monst *mdef, const struct attack *mattk)
                              s_suffix(Monnam(magr)));
             if (reflecting(magr)) {
                 if (vis)
-                    mon_reflects(magr, mdef, TRUE, 
+                    mon_reflects(magr, mdef, TRUE,
                                  "%s gaze is reflected further by %s %s!",
                                  uagr ? "Your" : s_suffix(Monnam(magr)));
                 break;
             }
-            if (!visad) { /* probably you're invisible */
+            if (!visad || hallucinating(magr)) { /* probably you're invisible */
                 /* not msgc_combatimmune because this may not be an intentional
                    attempt to reflection-petrify, so we shouldn't give alerts
                    that it isn't working; "hostile monster fails to commit
@@ -754,7 +755,8 @@ gazemm(struct monst *magr, struct monst *mdef, const struct attack *mattk)
 
             return (!uagr && DEADMONSTER(magr)) ? MM_AGR_DIED : 0;
         }
-        if (visda && valid_range && !resists_ston(mdef)) {
+        if (visda && valid_range && !resists_ston(mdef) &&
+            (!hallucinating(mdef) || magr->data != &mons[PM_MEDUSA])) {
             pline(combat_msgc(magr, mdef, cr_kill), "%s %s gaze.",
                   M_verbs(mdef, "meet"), s_suffix(mon_nam(magr)));
             if (udef) {
@@ -1142,7 +1144,7 @@ damage(struct monst *magr, struct monst *mdef, const struct attack *mattk)
         } else if (resists_cold(mdef)) {
             if (vis)
                 pline(combat_msgc(magr, mdef, cr_resist),
-                      "%s coated in frost, but parially resist%s the effects.",
+                      "%s coated in frost, but partially resist%s the effects.",
                       M_verbs(mdef, "are"), udef ? "" : "s");
             dmg = (dmg + 1) / 2;
         } else if (vis)
@@ -2361,14 +2363,8 @@ maurahitpile(struct monst *mon, int x, int y, const struct attack *mattk)
             if (!omon)
                 continue;
 
-            if (mon->mtame != omon->mtame) {
-                if (mon->mtame)
-                    tamedog(omon, NULL);
-                else
-                    omon->mtame = 0; /* no longer tame */
-            }
-            if (!mon->mtame)
-                msethostility(omon, !mon->mpeaceful, TRUE);
+            mtamedog(mon, omon, NULL);
+
             /* turn into a zombie if applicable */
             int mndx = NON_PM;
             if (is_human(omon->data))

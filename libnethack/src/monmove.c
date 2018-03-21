@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-15 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -119,18 +119,19 @@ onscary(int x, int y, const struct monst *mtmp)
 int
 regeneration_by_rate(int regen_rate)
 {
+    int absrate = abs(regen_rate);
     int ret = regen_rate / 100;
-    regen_rate %= 100;
+    absrate %= 100;
     int movecount = moves % 100;
     int rate_counter = 0;
     int i;
     for (i = 0; i <= movecount; i++) {
         if (rate_counter >= 100)
             rate_counter -= 100;
-        rate_counter += regen_rate;
+        rate_counter += absrate;
     }
     if (rate_counter >= 100)
-        ret++;
+        ret += sgn(regen_rate);
     return ret;
 }
 
@@ -150,7 +151,7 @@ regen_rate(const struct monst *mon, boolean energy)
     if (role == (energy ? PM_WIZARD : PM_HEALER))
         regen += 33;
 
-    regen += 3 * m_mlev(mon);
+    regen += (energy ? 4 : 3) * m_mlev(mon);
 
     int attrib = acurr(mon, energy ? A_WIS : A_CON);
 
@@ -158,9 +159,12 @@ regen_rate(const struct monst *mon, boolean energy)
         attrib -= 5;
 
     if (!energy || attrib > 3)
-        regen += 3 * attrib;
+        regen += (energy ? 2 : 3) * attrib;
     if (regen < 1)
         regen = 1;
+
+    if (energy)
+        regen -= maintenance_pw_drain(mon);
 
     return regen;
 }
@@ -176,6 +180,10 @@ mon_regen(struct monst *mon, boolean digest_meal)
     mon->pw += regeneration_by_rate(regen_rate(mon, TRUE));
     if (mon->pw > mon->pwmax)
         mon->pw = mon->pwmax;
+    if (mon->pw < 0) {
+        mon->pw = 0;
+        mon->spells_maintained = 0;
+    }
 
     if (mon->mspec_used)
         mon->mspec_used--;
@@ -428,7 +436,7 @@ dochug(struct monst *mtmp)
                     set_property(mtmp, INVIS, -2, FALSE);
                     /* Why? For the same reason in real demon talk */
                     pline(msgc_npcanger, "%s gets angry!", Amonnam(mtmp));
-                    msethostility(mtmp, TRUE, FALSE);
+                    sethostility(mtmp, TRUE, FALSE);
                     /* TODO: reset alignment? */
                     /* since no way is an image going to pay it off */
                 }
@@ -678,7 +686,7 @@ monster_would_take_item(struct monst *mtmp, struct obj *otmp)
         pctload < 85)
         return TRUE;
     if (throws_rocks(mtmp->data) && otmp->otyp == BOULDER &&
-        pctload < 50 && !In_sokoban(&(mtmp->dlevel->z)))
+        pctload < 50 && !Sokoban_lev(m_dlevel(mtmp)))
         return TRUE;
     /* note: used to check for artifacts, but this had side effects, also I'm
        not sure if gelatinous cubes understand the concept of artifacts
@@ -1174,7 +1182,7 @@ not_special:
            either (although it affects this code by turning off the sanity
            checks on it, meanining that, say, a monster can kill itself via
            passive damage). */
-        if (info[chi] & ALLOW_M)
+        if (info[chi] & ALLOW_MELEE)
             return mattackq(mtmp, nix, niy);
 
         /* The monster's moving to an empty space. */
@@ -1227,8 +1235,7 @@ not_special:
 
         struct monst *dmon = m_at(level, nix, niy);
         if ((info[chi] & ALLOW_PEACEFUL) && dmon) {
-            if (cansee(mtmp->mx, mtmp->my) ||
-                cansee(dmon->mx, dmon->my))
+            if (canseemon(mtmp) && canseemon(dmon))
                 pline_once(msgc_monneutral, "%s %s.",
                            M_verbs(mtmp, "displace"),
                            mon_nam(dmon));

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-14 */
+/* Last modified by Fredrik Ljungdahl, 2018-02-21 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -575,7 +575,7 @@ cpostfx(struct monst *mon, int pm)
     case PM_NEWT:
         /* MRKR: "eye of newt" may give small magical energy boost */
         mon->pwmax++;
-        mon->pw += 1 + rn2_on_rng(3, rng_newt_pw_boost);
+        mon->pw += 1 + rn2(3);
         if (mon->pw > mon->pwmax)
             mon->pw = mon->pwmax;
         if (you)
@@ -1033,7 +1033,8 @@ rottenfood(struct obj *obj)
 
         if (!Blind)
             what = "goes", where = "dark";
-        else if (Levitation || Is_airlevel(&u.uz) || Is_waterlevel(&u.uz))
+        else if (levitates(&youmonst) || Is_airlevel(&u.uz) ||
+                 Is_waterlevel(&u.uz))
             what = "you lose control of", where = "yourself";
         else
             what = "you slap against the", where =
@@ -1416,21 +1417,21 @@ eataccessory(struct monst *mon, struct obj *otmp)
             if (you) { /* monsters don't have attributes */
                 accessory_has_effect(mon, otmp);
                 if (adjattrib(A_CHA, otmp->spe, -1))
-                    makeknown(typ);
+                    tell_discovery(otmp);
             }
             break;
         case RIN_GAIN_STRENGTH:
             if (you) {
                 accessory_has_effect(mon, otmp);
                 if (adjattrib(A_STR, otmp->spe, -1))
-                    makeknown(typ);
+                    tell_discovery(otmp);
             }
             break;
         case RIN_GAIN_CONSTITUTION:
             if (you) {
                 accessory_has_effect(mon, otmp);
                 if (adjattrib(A_CON, otmp->spe, -1))
-                    makeknown(typ);
+                    tell_discovery(otmp);
             }
             break;
         case RIN_INCREASE_ACCURACY:
@@ -1449,7 +1450,7 @@ eataccessory(struct monst *mon, struct obj *otmp)
         case AMULET_OF_CHANGE:
             accessory_has_effect(mon, otmp);
             if (you || vis)
-                makeknown(typ);
+                tell_discovery(otmp);
             if (you)
                 change_sex();
             else
@@ -1466,7 +1467,7 @@ eataccessory(struct monst *mon, struct obj *otmp)
             if (you) {
                 if (!Unchanging && Upolyd) {
                     accessory_has_effect(mon, otmp);
-                    makeknown(typ);
+                    tell_discovery(otmp);
                     rehumanize(DIED, NULL);
                 }
             } else {
@@ -1576,7 +1577,7 @@ foodword(struct obj *otmp)
         return "food";
     if (otmp->oclass == GEM_CLASS && objects[otmp->otyp].oc_material == GLASS &&
         otmp->dknown)
-        makeknown(otmp->otyp);
+        tell_discovery(otmp);
     return foodwords[objects[otmp->otyp].oc_material];
 }
 

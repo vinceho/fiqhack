@@ -1,11 +1,12 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-12 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-19 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
 #include "hack.h"
 #include "hungerstatus.h"
 
+static void clear_pet_loops_recursed(struct monst *, struct monst *);
 static int pet_type(struct newgame_options *);
 
 void
@@ -53,7 +54,7 @@ make_familiar(struct monst *mon, struct obj *otmp, xchar x, xchar y, boolean qui
     int chance, trycnt = 100;
     boolean you = (mon == &youmonst);
     boolean vis = canseemon(mon);
-    boolean tame = (you || mon->mtame);
+    boolean tame = you;
 
     do {
         if (otmp) {     /* figurine; otherwise spell */
@@ -90,12 +91,11 @@ make_familiar(struct monst *mon, struct obj *otmp, xchar x, xchar y, boolean qui
     if (is_pool(level, mtmp->mx, mtmp->my) && minliquid(mtmp))
         return NULL;
 
-    if (tame)
+    if (mon == &youmonst)
         initedog(mtmp);
-    else if (mon->mpeaceful)
-        mtmp->mpeaceful = 1;
     else
-        msethostility(mtmp, TRUE, TRUE);
+        mtamedog(mon, mtmp, NULL);
+
     mtmp->msleeping = 0;
     if (otmp) { /* figurine; resulting monster might not become a pet */
         chance = rn2_on_rng(10, you ? rng_figurine_effect : rng_main);
@@ -105,15 +105,13 @@ make_familiar(struct monst *mon, struct obj *otmp, xchar x, xchar y, boolean qui
             chance = otmp->blessed ? 0 : !otmp->cursed ? 1 : 2;
         if (chance > 0) {
             mtmp->mtame = 0;    /* not tame after all */
-            mtmp->mpeaceful = 1;
+            mtmp->master = 0;
+            sethostility(mtmp, FALSE, TRUE);
             if (chance == 2) {  /* hostile (cursed figurine) */
                 if (!quietly && (you || vis))
                     pline(msgc_substitute, "You get a %s feeling about this.",
                           tame ? "bad" : "good");
-                if (tame)
-                    msethostility(mtmp, TRUE, TRUE);
-                else
-                    initedog(mtmp);
+                msethostility(mon, mtmp, TRUE, TRUE);
             }
         }
         /* if figurine has been named, give same name to the monster */
@@ -227,6 +225,50 @@ losedogs(void)
     }
 }
 
+/* Clears pet loops tied to given mon. */
+void
+clear_pet_loops(struct monst *mon)
+{
+    /* Find out the topmost monster in the pet chain */
+    struct monst *pet;
+    pet = tame_to(mon);
+    int i = 0;
+    while (pet && tame_to(pet)) {
+        i++;
+        if (tame_to(pet) == mon) {
+            pet->master = 0;
+            break;
+        }
+        pet = tame_to(pet);
+    }
+
+    if (i > MAX_PET_CHAIN) {
+        /* unassign pet state */
+        mon->master = 0;
+        return;
+    }
+
+    if (pet)
+        clear_pet_loops_recursed(pet, pet);
+    else
+        clear_pet_loops_recursed(mon, mon);
+}
+
+static void
+clear_pet_loops_recursed(struct monst *mon,
+                         struct monst *parent)
+{
+    struct monst *pet = NULL;
+    while (mnextpet(mon, &pet)) {
+        if (pet == parent)
+            pet->master = 0;
+        else {
+            clear_pet_loops_recursed(pet, parent);
+            clear_pet_loops_recursed(pet, pet);
+        }
+    }
+}
+
 /* called from resurrect() in addition to losedogs() */
 void
 mon_arrive(struct monst *mtmp, boolean with_you)
@@ -237,6 +279,7 @@ mon_arrive(struct monst *mtmp, boolean with_you)
     int num_segs;
 
     mtmp->dlevel = level;
+    clear_pet_loops(mtmp);
     mtmp->nmon = level->monlist;
     level->monlist = mtmp;
     if (mx_eshk(mtmp))
@@ -436,7 +479,7 @@ mon_catchup_elapsed_time(struct monst *mtmp, long nmv)
         if (mtmp->mintrinsic[prop] & TIMEOUT_RAW) {
             dec = imv;
             if (prop == PROTECTION &&
-                mprof(mtmp, MP_SCLRC) < P_EXPERT)
+                MP_SKILL(mtmp, P_CLERIC_SPELL) < P_EXPERT)
                 dec /= 2;
             mtmp->mintrinsic[prop] -= min(dec, mtmp->mintrinsic[prop] - 1);
         }
@@ -462,7 +505,7 @@ mon_catchup_elapsed_time(struct monst *mtmp, long nmv)
            changes.  This gives better results than rng_main, and we can't match
            exactly due to different pet-wrangling habits.
 
-           Note: not msethostility; we're off-level right now. */
+           Note: not sethostility; we're off-level right now. */
         if (mtmp->mtame > wilder)
             mtmp->mtame -= wilder;      /* less tame */
         else if (mtmp->mtame > rn2_on_rng(wilder, rng_dog_untame))
@@ -496,6 +539,10 @@ mon_catchup_elapsed_time(struct monst *mtmp, long nmv)
     mtmp->pw += regeneration_by_rate(imv * regen_rate(mtmp, TRUE));
     if (mtmp->pw > mtmp->pwmax)
         mtmp->pw = mtmp->pwmax;
+    if (mtmp->pw < 0) {
+        mtmp->pw = 0;
+        mtmp->spells_maintained = 0;
+    }
 }
 
 
@@ -791,12 +838,17 @@ tamedog(struct monst *mtmp, struct obj *obj)
         || (mtmp->data->mflags3 & M3_WANTSARTI))
         return NULL;
 
+    /* pet fixup */
+    struct monst *pet = NULL;
+    while (mnextpet(mtmp, &pet))
+        sethostility(pet, FALSE, TRUE);
+
     /* worst case, at least it'll be peaceful; this uses the main RNG because
        realtime effects means that this won't really sync anyway; this also
        calls set_malign (thus there's no need for the caller to call it after
        calling tamedog()) */
     if (!mtmp->mtame)
-        msethostility(mtmp, FALSE, TRUE);
+        sethostility(mtmp, FALSE, TRUE);
     if (flags.moonphase == FULL_MOON && night() && rn2(6) && obj &&
         mtmp->data->mlet == S_DOG)
         return NULL;
@@ -900,10 +952,10 @@ wary_dog(struct monst *mtmp, boolean was_dead)
     }
 
     if (edog && (edog->killed_by_u == 1 || edog->abuse > 2)) {
-        msethostility(mtmp, TRUE, FALSE);
+        sethostility(mtmp, TRUE, FALSE);
         if (edog->abuse >= 0 && edog->abuse < 10)
             if (!rn2_on_rng(edog->abuse + 1, rng_dog_untame))
-                msethostility(mtmp, FALSE, FALSE);
+                sethostility(mtmp, FALSE, FALSE);
         if (!quietly && cansee(mtmp->mx, mtmp->my)) {
             if (haseyes(youmonst.data)) {
                 if (haseyes(mtmp->data))
@@ -918,7 +970,7 @@ wary_dog(struct monst *mtmp, boolean was_dead)
     } else {
         /* chance it goes wild anyway - Pet Semetary */
         if (rn2_on_rng(mtmp->mtame, rng_dog_untame) == mtmp->mtame - 1)
-            msethostility(mtmp, TRUE, FALSE);
+            sethostility(mtmp, TRUE, FALSE);
     }
     if (!mtmp->mtame) {
         newsym(mtmp->mx, mtmp->my);

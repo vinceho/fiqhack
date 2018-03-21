@@ -1,29 +1,13 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-18 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-26 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
+#include "mail.h"
 #include "nhcurses.h"
-
-#ifdef WIN32
-void
-sendmail(void)
-{
-    curses_print_message(player.moves, msgc_failcurse,
-                         "Mail isn't available on this operating system.");
-    return;
-}
-#else
-# include <stdio.h>
-# include <string.h>
-# include <fcntl.h>
-
-# ifndef MAILBOXENVVAR
-/* Server admins: you can use -DMAILBOXENVVAR in CFLAGS to set the name of this
-   environment variable.  The game will then check for the variable you specify
-   in the environment at runtime to know where to look for the mailbox file. */
-#  define MAILBOXENVVAR "NHMAILBOX"
-# endif
+#include <stdio.h>
+#include <string.h>
+#include <fcntl.h>
 
 static void
 mailstr_callback(const char *str, void *vmsg)
@@ -32,28 +16,44 @@ mailstr_callback(const char *str, void *vmsg)
     strcpy(msg, str);
 }
 
+/* Returns the username of the client: watcher's username
+   if we're watching, the player's username if we're playing. */
+const char *
+client_username(void)
+{
+    const char *who = getenv("NH4SERVERUSER");
+    if (!who)
+        who = getenv("USER");
+
+    if (ui_flags.autoload)
+        who = getenv("NH4WATCHER");
+
+    if (!who || !*who)
+        return NULL;
+    return who;
+}
+
 void
 sendmail(void)
 {
-    if (ui_flags.current_followmode != FM_WATCH) {
-        curses_print_message(player.moves, msgc_failcurse,
-                             "Mail can only be sent while watching.");
+    if (ui_flags.current_followmode != FM_WATCH &&
+        ui_flags.current_followmode != FM_PLAY) {
+        curses_print_message(0, 0, player.moves, msgc_cancelled,
+                             "Mail can't be sent while replaying.");
         return;
     }
 
-    char *box;
-    FILE* mb;
-
-    box = getenv(MAILBOXENVVAR);
+    char error[BUFSZ];
+    const char *box = mail_filename(error);
     if (!box) {
-        curses_print_message(player.moves, msgc_failcurse,
-                             "Mail is disabled in this installation.");
+        curses_print_message(0, 0, player.moves, msgc_cancelled, error);
         return;
     }
 
-    const char *who = getenv("NH4WATCHER");
-    if (!who || !*who) {
-        curses_print_message(player.moves, msgc_failcurse,
+    FILE* mb;
+    const char *who = client_username();
+    if (!who) {
+        curses_print_message(0, 0, player.moves, msgc_cancelled,
                              "You need to be logged in to send mail!");
         return;
     }
@@ -65,7 +65,7 @@ sendmail(void)
 
     mb = fopen(box, "a");
     if (!mb) {
-        curses_print_message(player.moves, msgc_failcurse,
+        curses_print_message(0, 0, player.moves, msgc_cancelled,
                              "Error sending mail.");
         return;
     }
@@ -73,7 +73,5 @@ sendmail(void)
     fprintf(mb, "%s:%s\n", who, msg);
     fclose(mb);
 
-    curses_print_message(player.moves, msgc_actionok, "Mail sent!");
+    curses_print_message(0, 0, player.moves, msgc_actionok, "Mail sent!");
 }
-
-#endif

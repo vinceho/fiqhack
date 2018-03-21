@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-22 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -221,11 +221,12 @@ save_flags(struct memfile *mf)
     mwrite32(mf, flags.last_arg.key);
     mwrite8(mf, flags.double_troubled);
     mwrite8(mf, flags.autounlock);
+    mwrite8(mf, flags.msg_hints);
 
     /* Padding to allow options to be added without breaking save compatibility;
        add new options just before the padding, then remove the same amount of
        padding */
-    for (i = 0; i < 97; i++)
+    for (i = 0; i < 96; i++)
         mwrite8(mf, 0);
 
     mwrite(mf, flags.setseed, sizeof (flags.setseed));
@@ -553,9 +554,9 @@ save_you(struct memfile *mf, struct you *y)
         mwrite32(mf, y->uconduct_time[i]);
     }
     for (i = 0; i < P_NUM_SKILLS; i++) {
-        mwrite8(mf, y->weapon_skills[i].skill);
-        mwrite8(mf, y->weapon_skills[i].max_skill);
-        mwrite16(mf, y->weapon_skills[i].advance);
+        mwrite8(mf, y->unused_weapon_skills[i].skill);
+        mwrite8(mf, y->unused_weapon_skills[i].max_skill);
+        mwrite16(mf, y->unused_weapon_skills[i].advance);
     }
 
     save_quest_status(mf, &y->quest_status);
@@ -695,7 +696,8 @@ savelev(struct memfile *mf, xchar levnum)
         (lev->flags.hardfloor << 21) | (lev->flags.nommap << 20) |
         (lev->flags.hero_memory << 19) | (lev->flags.shortsighted << 18) |
         (lev->flags.graveyard << 17) | (lev->flags.is_maze_lev << 16) |
-        (lev->flags.is_cavernous_lev << 15) | (lev->flags.arboreal << 14);
+        (lev->flags.is_cavernous_lev << 15) | (lev->flags.arboreal << 14) |
+        (lev->flags.sokoban_rules << 13);
     mwrite32(mf, lflags);
     save_coords(mf, lev->doors, DOORMAX);
 
@@ -1059,4 +1061,3 @@ freedynamicdata(void)
 }
 
 /*save.c*/
-

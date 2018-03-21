@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-26 */
 /* Copyright (c) Daniel Thaler, 2011                              */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -529,6 +529,8 @@ extern void curses_getline_pw(const char *query, void *callbackarg,
 extern void handle_internal_cmd(struct nh_cmd_desc **cmd,
                                 struct nh_cmd_arg *arg,
                                 nh_bool include_debug);
+extern nh_bool get_command_key(const char *cmd_name, char key_name[BUFSZ],
+                               nh_bool);
 extern void get_command(void *callbackarg,
                         void (*callback)(const struct nh_cmd_and_arg *, void *),
                         nh_bool include_debug);
@@ -540,6 +542,7 @@ extern void handle_nested_key(int key);
 extern enum nh_direction key_to_dir(int key, int* range);
 
 /* mail.c */
+extern const char *client_username(void);
 extern void sendmail(void);
 
 /* main.c */
@@ -590,8 +593,8 @@ extern nh_bool do_item_actions(const struct nh_objitem *);
 
 /* messages.c */
 extern void discard_message_history(int lines_to_keep);
-extern void curses_print_message(int turn, enum msg_channel msgc,
-                                 const char *msg);
+extern void curses_print_message(int action, int id, int turn,
+                                 enum msg_channel msgc, const char *msg);
 extern void curses_temp_message(const char *msg);
 extern void curses_clear_temp_messages(void);
 extern void redraw_messages(void);

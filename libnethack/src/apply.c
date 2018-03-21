@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-15 */
+/* Last modified by Fredrik Ljungdahl, 2018-02-21 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -27,7 +27,10 @@ static int use_trap(struct obj *, const struct nh_cmd_arg *);
 static int use_stone(struct obj *);
 static int set_trap(void);      /* occupation callback */
 static int use_whip(struct obj *, const struct nh_cmd_arg *);
-static boolean find_polearm_target(int, int, coord *);
+static boolean find_polearm_target(struct obj *, int, int, coord *);
+static boolean update_polearm_target(struct obj *, int, int, coord *);
+static boolean find_polearm_target_recurse(struct obj *, int, int, coord *,
+                                           boolean, boolean);
 static int use_cream_pie(struct obj **);
 static int use_grapple(struct obj *, const struct nh_cmd_arg *);
 static boolean figurine_location_checks(struct obj *, coord *, boolean);
@@ -208,6 +211,9 @@ use_stethoscope(struct obj *obj, const struct nh_cmd_arg *arg)
         return 0;
 
     res = (moves == obj->lastused) && (flags.actions == obj->spe);
+    if (obj->blessed)
+        res = 0;
+
     obj->lastused = moves;
     obj->spe = flags.actions;
 
@@ -303,7 +309,7 @@ use_whistle(struct obj *obj)
         return 0;
     }
     pline(msgc_actionok, whistle_str, obj->cursed ? "shrill" : "high");
-    makeknown(obj->otyp);
+    tell_discovery(obj);
     wake_nearby(TRUE);
 
     struct monst *mtmp;
@@ -347,7 +353,7 @@ use_magic_whistle(struct obj *obj)
             }
         }
     }
-    makeknown(obj->otyp);
+    tell_discovery(obj);
     return 1;
 }
 
@@ -983,7 +989,7 @@ use_bell(struct obj **optr)
     }   /* charged BofO */
 
     if (learno) {
-        makeknown(BELL_OF_OPENING);
+        tell_discovery(obj);
         obj->known = 1;
     }
     if (wakem)
@@ -1205,7 +1211,7 @@ catch_lit(struct obj * obj)
             pline(msgc_consequence, "%s %s light!", Yname2(obj),
                   otense(obj, "catch"));
         if (obj->otyp == POT_OIL)
-            makeknown(obj->otyp);
+            tell_discovery(obj);
         if (obj->unpaid && costly_spot(u.ux, u.uy) &&
             obj->where == OBJ_INVENT) {
             /* if it catches while you have it, then it's your tough luck */
@@ -1346,7 +1352,7 @@ light_cocktail(struct obj *obj)
                   "That's in addition to the cost of the potion, of course.");
         bill_dummy_object(obj);
     }
-    makeknown(obj->otyp);
+    tell_discovery(obj);
 
     if (obj->quan > 1L) {
         obj = splitobj(obj, 1L);
@@ -1405,9 +1411,10 @@ dorub(const struct nh_cmd_arg *arg)
                 begin_burn(uwep, TRUE);
             djinni_from_bottle(&youmonst, uwep);
             update_inventory();
-        } else if (rn2(2) && !Blind)
+        } else if (rn2(2) && !Blind) {
             pline(msgc_failrandom, "You see a puff of smoke.");
-        else
+            tell_discovery(obj);
+        } else
             pline(msgc_failrandom, "Nothing happens.");
     } else if (obj->otyp == BRASS_LANTERN) {
         /* message from Adventure */
@@ -1530,11 +1537,9 @@ validate_jump(const struct musable *m, coord *cc, boolean magic,
     }
 
     /* Figure out allowed distance */
-    int skill = P_SKILL(spell_skilltype(SPE_JUMPING));
-    if (!you)
-        skill = mprof(mon, mspell_skilltype(SPE_JUMPING));
-    if (skill < 1)
-        skill = 1;
+    int skill = MP_SKILL(mon, spell_skilltype(SPE_JUMPING));
+    if (skill < P_UNSKILLED)
+        skill = P_UNSKILLED;
 
     int dist = 9;
     if (magic)
@@ -1758,178 +1763,85 @@ use_tinning_kit(struct obj *obj)
     return 1;
 }
 
+/* Using an unicorn horn. A cursed one selects a random trouble out of
+   Conf/Ill/Blind/Stun/Hallu to give for 1-100 turns. A blessed one will fix
+   all these troubles, but has a 10% of unblessing. An uncursed one will select
+   one at random to cure if the player has it. */
 void
-use_unicorn_horn(struct obj *obj)
+use_unicorn_horn(struct monst *mon, struct obj *obj)
 {
-#define PROP_COUNT 6    /* number of properties we're dealing with */
-#define ATTR_COUNT (A_MAX*3)    /* number of attribute points we might fix */
-    int idx, val, val_limit, trouble_count, unfixable_trbl, did_prop, did_attr;
-    int trouble_list[PROP_COUNT + ATTR_COUNT];
+    int trouble[] = {SICK, BLINDED, HALLUC, CONFUSION, STUNNED};
+    int resist[] = {SICK_RES, 0, HALLUC_RES, 0, STUN_RES};
+    int turns = rnd(100);
+    boolean cursed = (obj && obj->cursed);
+    boolean blessed = (obj && obj->blessed);
+    int cure = rn2_on_rng(5, cursed ? rng_cursed_unihorn : rng_main);
+    boolean res = FALSE;
+    boolean any_trouble = FALSE;
+    if (vomiting(mon) || zombifying(mon))
+        any_trouble = TRUE;
 
-    if (obj && obj->cursed) {
-        long lcount = (long)rnd(100);
-
-        /* players often apply known-cursed unihorns out of habit because they
-           haven't looked in inventory recently; ensure we have a
-           msgc_substitute message so that the player can see they used a cursed
-           object */
-        pline_once(msgc_substitute,
-                   "Something is wrong with your unicorn horn.");
-        obj->bknown = TRUE;
-
-        switch (rn2_on_rng(6, rng_cursed_unihorn)) {
-        case 0:
-            make_sick(&youmonst, (unsigned long)rn1(ACURR(A_CON), 20),
-                      killer_xname(obj), TRUE, SICK_NONVOMITABLE);
-            break;
-        case 1:
-            inc_timeout(&youmonst, BLINDED, lcount, FALSE);
-            break;
-        case 2:
-            if (!Confusion)
-                pline(msgc_statusbad, "You suddenly feel %s.",
-                      Hallucination ? "trippy" : "confused");
-            inc_timeout(&youmonst, CONFUSION, lcount, TRUE);
-            break;
-        case 3:
-            if (!resists_stun(&youmonst))
-                inc_timeout(&youmonst, STUNNED, lcount, FALSE);
-            else
-                pline(msgc_failrandom, "Nothing seems to happen.");
-            break;
-        case 4:
-            adjattrib(rn2(A_MAX), -1, FALSE);
-            break;
-        case 5:
-            inc_timeout(&youmonst, HALLUC, lcount, FALSE);
-            break;
-        }
-        return;
+    /* players often apply known-cursed unihorns out of habit because they
+       haven't looked in inventory recently; ensure we have a
+       msgc_substitute message so that the player can see they used a cursed
+       object */
+    if (cursed) {
+        if (mon == &youmonst) {
+            pline_once(msgc_substitute,
+                       "Something is wrong with your unicorn horn.");
+            obj->bknown = TRUE;
+        } else
+            obj->mbknown = TRUE;
     }
 
-/*
- * Entries in the trouble list use a very simple encoding scheme.
- */
-#define prop2trbl(X)    ((X) + A_MAX)
-#define attr2trbl(Y)    (Y)
-#define prop_trouble(X) trouble_list[trouble_count++] = prop2trbl(X)
-#define attr_trouble(Y) trouble_list[trouble_count++] = attr2trbl(Y)
+    int i;
+    for (i = 0; i < SIZE(trouble); i++) {
+        if (cursed && has_property(mon, resist[i]))
+            continue;
 
-    trouble_count = did_prop = did_attr = 0;
+        if (has_property(mon, trouble[i]))
+            any_trouble = TRUE;
 
-    /* collect property troubles */
-    if (sick(&youmonst) || zombifying(&youmonst))
-        prop_trouble(SICK);
-    if (property_timeout(&youmonst, BLINDED))
-        prop_trouble(BLINDED);
-    if (property_timeout(&youmonst, HALLUC)) /* black light polyself */
-        prop_trouble(HALLUC);
-    if (vomiting(&youmonst))
-        prop_trouble(VOMITING);
-    if (confused(&youmonst))
-        prop_trouble(CONFUSION);
-    if (property_timeout(&youmonst, STUNNED)) /* some polyforms are stunned */
-        prop_trouble(STUNNED);
+        if (!blessed && i != cure)
+            continue;
 
-    unfixable_trbl = unfixable_trouble_count(TRUE);
-
-    /* collect attribute troubles */
-    for (idx = 0; idx < A_MAX; idx++) {
-        val_limit = AMAX(idx);
-        /* don't recover strength lost from hunger */
-        if (idx == A_STR && u.uhs >= WEAK)
-            val_limit--;
-        /* don't recover more than 3 points worth of any attribute */
-        if (val_limit > ABASE(idx) + 3)
-            val_limit = ABASE(idx) + 3;
-
-        for (val = ABASE(idx); val < val_limit; val++)
-            attr_trouble(idx);
-        /* keep track of unfixed trouble, for message adjustment below */
-        unfixable_trbl += (AMAX(idx) - val_limit);
-    }
-
-    if (trouble_count == 0) {
-        pline(msgc_notarget, "Nothing happens.");
-        return;
-    } else if (trouble_count > 1) {     /* shuffle */
-        int i, j, k;
-
-        for (i = trouble_count - 1; i > 0; i--)
-            if ((j = rn2(i + 1)) != i) {
-                k = trouble_list[j];
-                trouble_list[j] = trouble_list[i];
-                trouble_list[i] = k;
+        if (!i) {
+            if (cursed) {
+                make_sick(mon, (unsigned long)rn1(ACURR(A_CON), 20),
+                          killer_xname(obj), TRUE, SICK_NONVOMITABLE);
+                res = TRUE;
+            } else {
+                res |= set_property(mon, SICK, -2, FALSE);
+                res |= set_property(mon, VOMITING, -2, FALSE);
+                res |= set_property(mon, ZOMBIE, -2, FALSE);
             }
-    }
-
-    /* 
-     *              Chances for number of troubles to be fixed
-     *               0      1      2      3      4      5      6      7
-     *   blessed:  22.7%  22.7%  19.5%  15.4%  10.7%   5.7%   2.6%   0.8%
-     *  uncursed:  35.4%  35.4%  22.9%   6.3%    0      0      0      0
-     *
-     * We don't use a separate RNG for blessed unihorns; unlike cursed unihorns
-     * (which might be used once or twice per game by accident), blessed
-     * unihorns are normally used frequently all through the game.
-     */
-    val_limit = rn2(dice(2, (obj && obj->blessed) ? 4 : 2));
-    if (val_limit > trouble_count)
-        val_limit = trouble_count;
-
-    /* fix [some of] the troubles */
-    for (val = 0; val < val_limit; val++) {
-        idx = trouble_list[val];
-
-        switch (idx) {
-        case prop2trbl(SICK):
-            set_property(&youmonst, SICK, -2, FALSE);
-            set_property(&youmonst, ZOMBIE, -2, FALSE);
-            did_prop++;
-            break;
-        case prop2trbl(BLINDED):
-            set_property(&youmonst, BLINDED, -2, FALSE);
-            did_prop++;
-            break;
-        case prop2trbl(HALLUC):
-            set_property(&youmonst, HALLUC, -2, FALSE);
-            did_prop++;
-            break;
-        case prop2trbl(VOMITING):
-            set_property(&youmonst, VOMITING, -2, FALSE);
-            did_prop++;
-            break;
-        case prop2trbl(CONFUSION):
-            set_property(&youmonst, CONFUSION, -2, FALSE);
-            did_prop++;
-            break;
-        case prop2trbl(STUNNED):
-            set_property(&youmonst, STUNNED, -2, FALSE);
-            did_prop++;
-            break;
-        default:
-            if (idx >= 0 && idx < A_MAX) {
-                ABASE(idx) += 1;
-                did_attr++;
-            } else
-                panic("use_unicorn_horn: bad trouble? (%d)", idx);
-            break;
+        } else {
+            if (cursed)
+                res |= inc_timeout(mon, trouble[i], turns, FALSE);
+            else
+                res |= set_property(mon, trouble[i], -2, FALSE);
         }
     }
 
-    if (did_attr)
-        pline(msgc_actionok, "This makes you feel %s!",
-              (did_prop + did_attr) ==
-              (trouble_count + unfixable_trbl) ? "great" : "better");
-    else if (!did_prop)
-        pline(msgc_failrandom, "Nothing seems to happen.");
+    if (!res && mon == &youmonst) {
+        if (any_trouble || cursed)
+            pline(msgc_failrandom, "Nothing seems to happen.");
+        else
+            pline(msgc_actionok, "Nothing happens.");
+    }
 
-#undef PROP_COUNT
-#undef ATTR_COUNT
-#undef prop2trbl
-#undef attr2trbl
-#undef prop_trouble
-#undef attr_trouble
+    if (blessed && !rn2_on_rng(10, mon == &youmonst ? rng_unbless_unihorn :
+                               rng_main)) {
+        if (!blind(mon)) {
+            if (mon == &youmonst) {
+                pline(msgc_itemloss, "%s %s %s.", Shk_Your(obj),
+                      aobjnam(obj, "glow"), hcolor("brown"));
+                obj->bknown = TRUE;
+            } else
+                obj->mbknown = TRUE;
+        }
+        unbless(obj);
+    }
 }
 
 /*
@@ -2234,6 +2146,7 @@ use_stone(struct obj *tstone)
 
     do_scratch = FALSE;
     streak_color = 0;
+    boolean id_touchstone = FALSE;
 
     switch (obj->oclass) {
     case GEM_CLASS:    /* these have class-specific handling below */
@@ -2244,14 +2157,16 @@ use_stone(struct obj *tstone)
                    (tstone->blessed ||
                     (!tstone->cursed &&
                      (Role_if(PM_ARCHEOLOGIST) || Race_if(PM_GNOME))))) {
-            makeknown(TOUCHSTONE);
             makeknown(obj->otyp);
             prinv(NULL, obj, 0L);
+            tell_discovery(tstone);
             return 1;
         } else {
             /* either a ring or the touchstone was not effective */
             if (objects[obj->otyp].oc_material == GLASS) {
                 do_scratch = TRUE;
+                if (obj->oclass == GEM_CLASS)
+                    id_touchstone = TRUE;
                 break;
             }
         }
@@ -2308,6 +2223,8 @@ use_stone(struct obj *tstone)
               streak_color, stonebuf);
     else
         pline(msgc_actionok, scritch);
+    if (id_touchstone)
+        tell_discovery(tstone);
     return 1;
 }
 
@@ -2328,10 +2245,10 @@ use_trap(struct obj *otmp, const struct nh_cmd_arg *arg)
         what = is_animal(u.ustuck->data) ? "while swallowed" : "while engulfed";
     else if (Underwater)
         what = "underwater";
-    else if (Levitation)
-        what = "while levitating";
     else if (is_pool(level, u.ux, u.uy))
         what = "in water", mispasting = 1;
+    else if (levitates(&youmonst))
+        what = "while levitating";
     else if (is_lava(level, u.ux, u.uy))
         what = "in lava", mispasting = 1;
     else if (On_stairs(u.ux, u.uy))
@@ -2518,7 +2435,7 @@ use_whip(struct obj *obj, const struct nh_cmd_arg *arg)
             return 1;
         }
 
-        if (Levitation || u.usteed) {
+        if (levitates(&youmonst) || u.usteed) {
             /* Have a shot at snaring something on the floor */
             otmp = level->objects[u.ux][u.uy];
             if (otmp && otmp->otyp == CORPSE && otmp->corpsenm == PM_HORSE) {
@@ -2719,17 +2636,51 @@ use_whip(struct obj *obj, const struct nh_cmd_arg *arg)
 
 /* Choose an appropriate starting position for prompting */
 static boolean
-find_polearm_target(int minr, int maxr, coord *cc)
+find_polearm_target(struct obj *obj, int minr, int maxr, coord *cc)
+{
+    if (!find_polearm_target_recurse(obj, minr, maxr, cc, TRUE, FALSE))
+        return find_polearm_target_recurse(obj, minr, maxr, cc, FALSE, FALSE);
+    return TRUE;
+}
+
+static boolean
+update_polearm_target(struct obj *obj, int minr, int maxr, coord *cc)
+{
+    return find_polearm_target_recurse(obj, minr, maxr, cc, FALSE, TRUE);
+}
+
+static boolean
+find_polearm_target_recurse(struct obj *obj, int minr, int maxr, coord *cc,
+                            boolean use_poledir, boolean update_poledir)
 {
     struct monst *mon;
 
     /* Fallback */
-    cc->x = u.ux;
-    cc->y = u.uy;
+    if (!update_poledir) {
+        cc->x = u.ux;
+        cc->y = u.uy;
+    }
 
     int x, y;
+    int i = 0;
+    int poledir = 0;
+    if (obj && use_poledir)
+        poledir = obj->poledir;
+
     for (x = (u.ux - 2); x <= (u.ux + 2); x++) {
         for (y = (u.uy - 2); y <= (u.uy + 2); y++) {
+            i++;
+            if (update_poledir) {
+                if (x == cc->x && y == cc->y) {
+                    obj->poledir = i;
+                    return TRUE;
+                }
+                continue;
+            }
+
+            if (poledir && i != poledir)
+                continue;
+
             if (!isok(x, y) || distu(x, y) < minr || distu(x, y) > maxr ||
                 !couldsee(x, y))
                 continue;
@@ -2778,7 +2729,7 @@ use_pole(struct obj *obj, const struct nh_cmd_arg *arg)
         max_range = 8;
 
     /* See if we have an appropriate target to autofire */
-    if (autofiring && !find_polearm_target(min_range, max_range, &cc)) {
+    if (autofiring && !find_polearm_target(NULL, min_range, max_range, &cc)) {
         pline(msgc_cancelled,
               "There doesn't seem to be an appropriate target to thrust.");
         return 0;
@@ -2795,7 +2746,7 @@ use_pole(struct obj *obj, const struct nh_cmd_arg *arg)
     if (!autofiring) {
         /* Prompt for a location */
         pline(msgc_uiprompt, where_to_hit);
-        find_polearm_target(min_range, max_range, &cc);
+        find_polearm_target(obj, min_range, max_range, &cc);
         if (getargpos(arg, &cc, FALSE, "the spot to hit") == NHCR_CLIENT_CANCEL)
             return 0;     /* user pressed ESC */
     }
@@ -2818,6 +2769,7 @@ use_pole(struct obj *obj, const struct nh_cmd_arg *arg)
 
     /* Attack the monster there */
     if ((mtmp = m_at(level, cc.x, cc.y)) != NULL) {
+        update_polearm_target(obj, min_range, max_range, &cc);
         int oldhp = mtmp->mhp;
 
         if (resolve_uim(flags.interaction_mode, TRUE, cc.x, cc.y) == uia_halt)
@@ -3088,7 +3040,7 @@ do_break_wand(struct obj *obj, boolean intentional)
     wanexpl:
         explode(u.ux, u.uy, (obj->otyp - WAN_MAGIC_MISSILE), dmg, WAND_CLASS,
                 expltype, NULL, 0);
-        makeknown(obj->otyp);   /* explode described the effect */
+        tell_discovery(obj);   /* explode described the effect */
         goto discard_broken_wand;
     case WAN_STRIKING:
         /* we want this before the explosion instead of at the very end */
@@ -3231,7 +3183,9 @@ doapply(const struct nh_cmd_arg *arg)
     case SACK:
     case BAG_OF_HOLDING:
     case OILSKIN_SACK:
-        res = use_container(obj, 1);
+        res = use_container(obj, 1, FALSE, FALSE);
+        if (res < 0)
+            res = 0;
         break;
     case BAG_OF_TRICKS:
         bagotricks(obj);
@@ -3335,7 +3289,7 @@ doapply(const struct nh_cmd_arg *arg)
         res = use_figurine(&obj, arg);
         break;
     case UNICORN_HORN:
-        use_unicorn_horn(obj);
+        use_unicorn_horn(&youmonst, obj);
         break;
     case WOODEN_FLUTE:
     case MAGIC_FLUTE:
@@ -3382,12 +3336,15 @@ doapply(const struct nh_cmd_arg *arg)
                    ICE) ? "Oops!  %s away from you!" :
                 "Oops!  %s to the floor!",
                 The(aobjnam(otmp, "slip")), NULL);
-            makeknown(HORN_OF_PLENTY);
         } else {
             pline(obj->known ? msgc_cancelled1 : msgc_failcurse,
                   "You feel an absence of magical power.");
             obj->known = TRUE;
         }
+
+        /* other horns make frightful sounds if discharged, so we know it's a
+           horn of plenty no matter what. */
+        tell_discovery(obj);
         break;
     case LAND_MINE:
     case BEARTRAP:

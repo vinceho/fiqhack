@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-09 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-07 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -303,7 +303,7 @@ setuswapwep(struct obj *obj)
 
 /*** Commands to change particular slot(s) ***/
 
-static const char wield_objs[] = { ALL_CLASSES, ALLOW_NONE, 0 }; 
+static const char wield_objs[] = { ALL_CLASSES, ALLOW_NONE, 0 };
 
 int
 dowield(const struct nh_cmd_arg *arg)
@@ -346,13 +346,6 @@ doswapweapon(const struct nh_cmd_arg *arg)
 int
 dowieldquiver(const struct nh_cmd_arg *arg)
 {
-    if (yn("Do you want to ready a spell?") == 'y') {
-        quiver_spell();
-        if (u.spellquiver)
-            setuqwep(NULL);
-        return 0;
-    }
-
     struct obj *newquiver = getargobj(arg, wield_objs, "quiver");
     if (!newquiver)
         return 0;
@@ -600,7 +593,7 @@ chwepon(struct monst *mon, struct obj *otmp, int amount)
                   "%s weapon seems sharper now.", your);
         twep->cursed = 0;
         if ((you || vis) && otyp != STRANGE_OBJECT)
-            makeknown(otyp);
+            tell_discovery(twep);
         goto weapon_unpaid_fixup;
     }
 
@@ -613,7 +606,7 @@ chwepon(struct monst *mon, struct obj *otmp, int amount)
             pline(you ? msgc_itemloss : msgc_monneutral,
                   "%s weapon seems duller now.", your);
         if ((you || vis) && otyp != STRANGE_OBJECT && otmp->bknown)
-            makeknown(otyp);
+            tell_discovery(twep);
         return 1;
     }
 
@@ -742,4 +735,3 @@ unwield_silently(struct obj *obj)
 }
 
 /*wield.c*/
-

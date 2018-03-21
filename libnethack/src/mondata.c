@@ -1,10 +1,11 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-07 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-08 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
 #include "hack.h"
 
+static int pm_gender(int);
 static const struct attack *dmgtype_fromattack(const struct permonst *, int,
                                                int);
 
@@ -86,6 +87,8 @@ pm_name(const struct monst *mon)
     boolean female = mon->female;
     if (mon == &youmonst)
         female = u.ufemale;
+    if (is_neuter(mon->data))
+        female = FALSE;
 
     int pm = NON_PM;
     if (mon != &youmonst)
@@ -102,9 +105,17 @@ pm_name(const struct monst *mon)
 const char *
 opm_name(const struct obj *obj)
 {
-    if (obj->spe & OPM_FEMALE)
+    int gender = obj_gender(obj);
+    if (!strcmp(pm_male(obj->corpsenm), pm_female(obj->corpsenm)) &&
+        gender != 2) {
+        if (gender == 1)
+            return msgprintf("female %s", pm_female(obj->corpsenm));
+        return msgprintf("male %s", pm_male(obj->corpsenm));
+    }
+
+    if (gender == 1)
         return pm_female(obj->corpsenm);
-    return pm_male(obj->corpsenm);
+    return pm_male(obj->corpsenm); /* or neuter */
 }
 
 void
@@ -486,15 +497,21 @@ monsndx(const struct permonst *ptr)
     return i;
 }
 
-
-
 int
 name_to_mon(const char *in_str)
+{
+    int gend;
+    return gname_to_mon(in_str, &gend);
+}
+
+/* gend is used to set the gender that the name specified */
+int
+gname_to_mon(const char *in_str, int *gend)
 {
     /* Be careful.  We must check the entire string in case it was something
        such as "ettin zombie corpse".  The calling routine doesn't know about
        the "corpse" until the monster name has already been taken off the
-       front, so we have to be able to read the name with extraneous stuff such 
+       front, so we have to be able to read the name with extraneous stuff such
        as "corpse" stuck on the end. This causes a problem for names which
        prefix other names such as "ettin" on "ettin zombie".  In this case we
        want the _longest_ name which exists. This also permits plurals created
@@ -539,59 +556,67 @@ name_to_mon(const char *in_str)
         static const struct alt_spl {
             const char *name;
             short pm_val;
+            int gender; /* 0: male, 1: female, 2: none/unspecified */
         } names[] = {
             /* Alternate spellings */
-            { "grey dragon", PM_GRAY_DRAGON },
-            { "baby grey dragon", PM_BABY_GRAY_DRAGON },
-            { "grey unicorn", PM_GRAY_UNICORN },
-            { "grey ooze", PM_GRAY_OOZE },
-            { "gray-elf", PM_GREY_ELF },
-            { "mindflayer", PM_MIND_FLAYER },
-            { "master mindflayer", PM_MASTER_MIND_FLAYER },
+            { "grey dragon", PM_GRAY_DRAGON, 2 },
+            { "baby grey dragon", PM_BABY_GRAY_DRAGON, 2 },
+            { "grey unicorn", PM_GRAY_UNICORN, 2 },
+            { "grey ooze", PM_GRAY_OOZE, 2 },
+            { "gray-elf", PM_GREY_ELF, 2 },
+            { "mindflayer", PM_MIND_FLAYER, 2 },
+            { "master mindflayer", PM_MASTER_MIND_FLAYER, 2 },
             /* Hyphenated names */
-            { "ki rin", PM_KI_RIN },
-            { "uruk hai", PM_URUK_HAI },
-            { "orc captain", PM_ORC_CAPTAIN },
-            { "woodland elf", PM_WOODLAND_ELF },
-            { "green elf", PM_GREEN_ELF },
-            { "grey elf", PM_GREY_ELF },
-            { "gray elf", PM_GREY_ELF },
-            { "elf lord", PM_ELF_LORD },
-            { "olog hai", PM_OLOG_HAI },
-            { "arch lich", PM_ARCH_LICH },
+            { "ki rin", PM_KI_RIN, 2 },
+            { "uruk hai", PM_URUK_HAI, 2 },
+            { "orc captain", PM_ORC_CAPTAIN, 2 },
+            { "woodland elf", PM_WOODLAND_ELF, 2 },
+            { "green elf", PM_GREEN_ELF, 2 },
+            { "grey elf", PM_GREY_ELF, 2 },
+            { "gray elf", PM_GREY_ELF, 2 },
+            { "elf lord", PM_ELF_LORD, 0 },
+            { "elf lady", PM_ELF_LORD, 1 },
+            { "olog hai", PM_OLOG_HAI, 2 },
+            { "arch lich", PM_ARCH_LICH, 2 },
             /* Some irregular plurals */
-            { "incubi", PM_INCUBUS },
-            { "succubi", PM_INCUBUS },
-            { "violet fungi", PM_VIOLET_FUNGUS },
-            { "homunculi", PM_HOMUNCULUS },
-            { "baluchitheria", PM_BALUCHITHERIUM },
-            { "lurkers above", PM_LURKER_ABOVE },
-            { "cavemen", PM_CAVEMAN },
-            { "cavewomen", PM_CAVEMAN },
-            { "djinn", PM_DJINNI },
-            { "mumakil", PM_MUMAK },
-            { "erinyes", PM_ERINYS },
+            { "incubi", PM_INCUBUS, 0 },
+            { "succubi", PM_INCUBUS, 1 },
+            { "violet fungi", PM_VIOLET_FUNGUS, 2 },
+            { "homunculi", PM_HOMUNCULUS, 2 },
+            { "baluchitheria", PM_BALUCHITHERIUM, 2 },
+            { "lurkers above", PM_LURKER_ABOVE, 2 },
+            { "cavemen", PM_CAVEMAN, 0 },
+            { "cavewomen", PM_CAVEMAN, 1 },
+            { "djinn", PM_DJINNI, 2 },
+            { "mumakil", PM_MUMAK, 2 },
+            { "erinyes", PM_ERINYS, 2 },
             /* falsely caught by -ves check above */
-            { "master of thief", PM_MASTER_OF_THIEVES },
+            { "master of thief", PM_MASTER_OF_THIEVES, 2 },
             /* end of list */
             {0, 0}
         };
         const struct alt_spl *namep;
 
         for (namep = names; namep->name; namep++)
-            if (!strncmpi(str, namep->name, (int)strlen(namep->name)))
+            if (!strncmpi(str, namep->name, (int)strlen(namep->name))) {
+                *gend = namep->gender;
                 return namep->pm_val;
+            }
     }
 
     for (len = 0, i = LOW_PM; i < NUMMONS; i++) {
         boolean match = FALSE;
         int m_i_len = strlen(mons[i].mname);
         int f_i_len = strlen(mons[i].fname);
-        if (m_i_len > len && !strncmpi(mons[i].mname, str, m_i_len))
+        if (m_i_len > len && !strncmpi(mons[i].mname, str, m_i_len)) {
             match = TRUE;
-        else if (f_i_len > len && !strncmpi(mons[i].fname, str, f_i_len)) {
+            *gend = 2;
+            if (strcmpi(mons[i].mname, mons[i].fname))
+                *gend = 0;
+        } else if (f_i_len > len && !strncmpi(mons[i].fname, str, f_i_len)) {
             match = TRUE;
             m_i_len = f_i_len;
+            *gend = 1;
         }
 
         if (match) {
@@ -625,6 +650,41 @@ gender(struct monst *mtmp)
         return 2;
     return mtmp->female;
 }
+
+/* returns 3 values (0=male, 1=female, 2=neuter, 3=varies) */
+static int
+pm_gender(int pm)
+{
+    if (pm < LOW_PM || pm > NUMMONS)
+        panic("pm_gender: permonst out of range (%d)", pm);
+
+    const struct permonst *mdat = &mons[pm];
+    if (is_neuter(mdat))
+        return 2;
+    if (is_male(mdat))
+        return 0;
+    if (is_female(mdat))
+        return 1;
+    return 3;
+}
+
+/* returns 3 values (0=male, 1=female, 2=none) */
+int
+obj_gender(const struct obj *obj)
+{
+    if (!corpsenm_is_relevant(obj->otyp))
+        return 2;
+    if (obj->otyp == TIN && (obj->spe & OPM_SPINACH))
+        return 2;
+    if (obj->otyp == EGG && obj->corpsenm == NON_PM)
+        return 2;
+
+    int fixedgend = pm_gender(obj->corpsenm);
+    if (fixedgend == 3)
+        return ((obj->spe & OPM_MALE) ? 0 : 1);
+    return fixedgend;
+}
+
 
 /* Like gender(), but lower animals and such are still "it". */
 /* This is the one we want to use when printing messages. */
@@ -831,14 +891,27 @@ on_fire(const struct permonst *mptr, const struct attack *mattk)
     return what;
 }
 
+static int skill_to_mskill[P_NUM_SKILLS] = {
+    [P_ATTACK_SPELL] = MP_SATTK,
+    [P_HEALING_SPELL] = MP_SHEAL,
+    [P_DIVINATION_SPELL] = MP_SDIVN,
+    [P_ENCHANTMENT_SPELL] = MP_SENCH,
+    [P_CLERIC_SPELL] = MP_SCLRC,
+    [P_ESCAPE_SPELL] = MP_SESCA,
+    [P_MATTER_SPELL] = MP_SMATR,
+    [P_WANDS] = MP_WANDS,
+};
 
 /* check monster proficiency */
 short
-mprof(const struct monst * mon, int proficiency)
+mprof(const struct permonst *mdat, int proficiency)
 {
-    const struct permonst *ptr = mon->data;
+    int mskill = skill_to_mskill[proficiency];
+    if (!mskill)
+        return P_ISRESTRICTED;
+
     /* return the relevant bits. */
-    return (short) ((((ptr)->mskill / proficiency) % 4) + 1);
+    return (short) ((((mdat)->mskill / mskill) % 4) + 1);
 }
 
 /*mondata.c*/

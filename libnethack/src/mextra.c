@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-08 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-22 */
 /* Copyright (c) Fredrik Ljungdahl, 2015. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -101,6 +101,7 @@ GEN_EXTYP(edog, monst, m, free)
 GEN_EXTYP(epri, monst, m, free)
 GEN_EXTYP(eshk, monst, m, free)
 GEN_EXTYP(egd, monst, m, free)
+GEN_EXTYP(ecache, monst, m, free)
 GEN_EXTYP(monst, obj, o, dealloc_monst) /* dealloc_monst frees mextra */
 
 #undef GEN_EXBASE
@@ -138,6 +139,9 @@ mx_copy(struct monst *mon, const struct monst *mtmp)
         mx_egd_new(mon);
         memcpy(mx_egd(mon), mx_egd(mtmp), sizeof (struct egd));
     }
+
+    /* Do not copy cache, but make a new one */
+    mx_ecache_new(mon);
 }
 
 void
@@ -152,6 +156,7 @@ mx_free(struct monst *mon)
     mx_epri_free(mon);
     mx_eshk_free(mon);
     mx_egd_free(mon);
+    mx_ecache_free(mon);
     if (mon->mextra) /* the above frees run possiblyfree */
         panic("trying to free mextra failed?");
 }
@@ -161,7 +166,7 @@ mx_possiblyfree(struct monst *mon)
 {
     struct mextra *mx = mon->mextra;
     if (!mx || mx->eyou || mx->edog || mx->epri || mx->eshk || mx->egd ||
-        mx->name)
+        mx->ecache || mx->name)
         return;
 
     free(mon->mextra);
@@ -219,7 +224,8 @@ mxcontent(const struct monst *mon)
         (mx->eyou ? MX_EYOU : 0) |
         (mx->epri ? MX_EPRI : 0) |
         (mx->eshk ? MX_ESHK : 0) |
-        (mx->egd ? MX_EGD : 0);
+        (mx->egd ? MX_EGD : 0) |
+        (mx->ecache ? MX_ECACHE : 0);
 }
 
 int
@@ -280,7 +286,13 @@ restore_mextra(struct memfile *mf, struct monst *mon)
         mx->eyou->last_pray_action = mread32(mf);
         mx->eyou->prayed_result = mread8(mf);
 
-        for (i = 0; i < 1000; i++)
+        int msghints = mread16(mf);
+        for (i = 0; i < msghints; i++)
+            mx->eyou->msg_hint[i] = mread8(mf);
+
+        mx->eyou->oldmoves = mread32(mf);
+
+        for (i = 0; i < 994; i++)
             mread8(mf);
     }
     if (extyp & MX_EDOG) {
@@ -377,8 +389,8 @@ save_mextra(struct memfile *mf, const struct monst *mon)
     }
 
     int extyp = mxcontent(mon);
-    if (!extyp) {
-        panic("save_mextra: mextra struct is empty?");
+    if (!(extyp & MX_ECACHE)) {
+        panic("save_mextra: no cache/empty?");
         return;
     }
 
@@ -401,8 +413,13 @@ save_mextra(struct memfile *mf, const struct monst *mon)
         mtag(mf, mon->m_id, MTAG_MXEYOU);
         mwrite32(mf, mx->eyou->last_pray_action);
         mwrite8(mf, mx->eyou->prayed_result);
+        mwrite16(mf, LAST_MSGH + 1);
+        for (i = 0; i <= LAST_MSGH; i++)
+            mwrite8(mf, mx->eyou->msg_hint[i]);
 
-        for (i = 0; i < 1000; i++)
+        mwrite32(mf, mx->eyou->oldmoves);
+
+        for (i = 0; i < 994; i++)
             mwrite8(mf, 0);
     }
     if (extyp & MX_EDOG) {
@@ -462,6 +479,9 @@ save_mextra(struct memfile *mf, const struct monst *mon)
         mwrite8(mf, mx->egd->gddone);
         for (i = 0; i < FCSIZ; i++)
             save_fcorr(mf, &(mx->egd)->fakecorr[i]);
+    }
+    if (extyp & MX_ECACHE) {
+        /* not saved */
     }
 }
 

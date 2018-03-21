@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -177,7 +177,12 @@ resolve_uim(enum u_interaction_mode uim, boolean weird_attack, xchar x, xchar y)
        wall. Again, this can be overriden using "moveonly". */
     if (!last_command_was("moveonly")) {
         boolean lava = l->mem_bg == S_lava;
-        boolean pool = l->mem_bg == S_pool;
+        boolean pool = (l->mem_bg == S_pool || l->mem_bg == S_water);
+
+        /* Plane of water is weird */
+        if (Is_waterlevel(&u.uz) && cansee(x, y ))
+            pool = is_pool(level, x, y);
+
         int waterwalk = 0;
         /* set waterwalk to 1 if IDed, 2 if IDed fireproof (allows lava) */
         if (uarmf && uarmf->otyp == WATER_WALKING_BOOTS && uarmf->dknown &&
@@ -187,18 +192,25 @@ resolve_uim(enum u_interaction_mode uim, boolean weird_attack, xchar x, xchar y)
                 waterwalk++;
         }
 
-        if (!Levitation && !Flying && !is_clinger(youmonst.data) &&
+        if (!aboveliquid(&youmonst) &&
             ((lava && waterwalk < 2) ||
              (pool && (!Swimming || waterproof(&youmonst)) && !waterwalk)) &&
             !(lava ? is_lava(level, u.ux, u.uy) : is_pool(level, u.ux, u.uy))) {
             if (cansee(x, y))
                 pline(msgc_cancelled,
-                      is_pool(level, x, y) ? "You never learned to %s!" :
+                      pool ? "You never learned to %s!" :
                       "That lava looks rather dangerous...",
                       Swimming ? "remain waterproof" : "swim");
             else
                 pline(msgc_cancelled, "As far as you can remember, it's "
                       "not safe to stand there.");
+            pline(msgc_controlhelp,
+                  "(Use the 'moveonly' command to move there anyway.)");
+            return uia_halt;
+        }
+
+        if (known_harmful_trap(&youmonst, x, y)) {
+            pline(msgc_cancelled, "There's a trap there!");
             pline(msgc_controlhelp,
                   "(Use the 'moveonly' command to move there anyway.)");
             return uia_halt;
@@ -329,7 +341,7 @@ moverock(schar dx, schar dy)
         rx = u.ux + 2 * dx;     /* boulder destination position */
         ry = u.uy + 2 * dy;
         action_completed();
-        if (Levitation || Is_airlevel(&u.uz)) {
+        if (levitates(&youmonst) || Is_airlevel(&u.uz)) {
             if (Blind)
                 feel_location(sx, sy);
             pline(msgc_yafm, "You don't have enough leverage to push %s.",
@@ -353,7 +365,7 @@ moverock(schar dx, schar dy)
             mtmp = m_at(level, rx, ry);
 
             /* KMH -- Sokoban doesn't let you push boulders diagonally */
-            if (In_sokoban(&u.uz) && dx && dy) {
+            if (Sokoban && dx && dy) {
                 if (Blind)
                     feel_location(sx, sy);
                 pline(msgc_yafm, "%s won't roll diagonally on this %s.",
@@ -735,7 +747,7 @@ boolean
 bad_rock(const struct monst *mon, xchar x, xchar y)
 {
     const struct permonst *mdat = mon->data;
-    return (boolean) ((In_sokoban(&u.uz) && sobj_at(BOULDER, level, x, y)) ||
+    return (boolean) ((Sokoban && sobj_at(BOULDER, level, x, y)) ||
                       (IS_ROCK(level->locations[x][y].typ)
                        && (!tunnels(mdat) || needspick(mdat) ||
                            !may_dig(level, x, y))
@@ -756,7 +768,7 @@ can_diagonal_squeeze(const struct monst *mon, boolean msg)
     if (!you && !canseemon(mon))
         msg = FALSE;
 
-    if (In_sokoban(m_mz(mon))) {
+    if (Sokoban_lev(m_dlevel(mon))) {
         if (msg)
             pline(msgc, "%s cannot pass that way.", Monnam(mon));
         return FALSE;
@@ -834,8 +846,8 @@ init_test_move_cache(struct test_move_cache *cache)
     cache->fumbling = !!Fumbling;
     cache->halluc = !!Hallucination;
     cache->passwall = !!Passes_walls;
-    cache->grounded = !!Ground_based;
-
+    cache->grounded = aboveliquid(&youmonst);
+    cache->wt_over_cap = inv_weight_over_cap();
     cache->instead_of_pushing_boulder = FALSE;
 }
 
@@ -843,7 +855,7 @@ init_test_move_cache(struct test_move_cache *cache)
    TEST_MOVE, TEST_TRAV or TEST_SLOW.
 
    This function takes the values of Blind, Stunned, Fumbling, Hallucination,
-   Passes_walls, and Ground_based as arguments; repeatedly recalculating them
+   Passes_walls, and aboveliquid as arguments; repeatedly recalculating them
    was taking up 34% of the runtime of the entire program before this change. */
 boolean
 test_move(int ux, int uy, int dx, int dy, int dz, int mode,
@@ -982,16 +994,16 @@ test_move(int ux, int uy, int dx, int dy, int dz, int mode,
     /* Can we be blocked by a boulder? */
     if (!throws_rocks(youmonst.data) &&
         !(verysmall(youmonst.data) && !u.usteed) &&
-        !((!youmonst.minvent || inv_weight_over_cap() <= -850) && !u.usteed)) {
+        !((!youmonst.minvent || cache->wt_over_cap <= -850) && !u.usteed)) {
         /* We assume we can move boulders when we're at a distance from them.
            When it comes to actually do the move, resolve_uim() may replace the
            move with a #pushboulder command. If it doesn't, the move fails
            (unless we're somehow able to move onto a boulder square). Thus, this
            is checking sobj_at (what's actually there), not memory. */
         if (mode == DO_MOVE && sobj_at(BOULDER, level, x, y) &&
-            (In_sokoban(&u.uz) || !cache->passwall)) {
+            (Sokoban || !cache->passwall)) {
             if (!tunnels(youmonst.data) || needspick(youmonst.data) ||
-                In_sokoban(&u.uz) || still_chewing(x, y)) {
+                Sokoban || still_chewing(x, y)) {
                 /* TODO: this codepath seems to be unreachable (in favour
                    of the Oof! codepath) */
                 if (!cache->instead_of_pushing_boulder)
@@ -1009,7 +1021,7 @@ test_move(int ux, int uy, int dx, int dy, int dz, int mode,
            boulders can be time-consuming, and it's more intuitive if travel
            always picks the same path.) */
         if (mode == TEST_TRAV && level->locations[x][y].mem_obj == BOULDER + 1) {
-            if (In_sokoban(&u.uz))
+            if (Sokoban)
                 return FALSE;
             if (level->locations[ux][uy].mem_obj == BOULDER + 1 &&
                 !cache->passwall &&
@@ -1038,7 +1050,7 @@ test_move(int ux, int uy, int dx, int dy, int dz, int mode,
                   throws_rocks(youmonst.data) ? " aside" : "",
                   cache->instead_of_pushing_boulder ? " instead" : "");
 
-            if (In_sokoban(&u.uz))
+            if (Sokoban)
                 change_luck(-1);    /* Sokoban guilt */
         }
     }
@@ -1158,6 +1170,8 @@ void
 distmap_init(struct distmap_state *ds, int x1, int y1, struct monst *mtmp)
 {
     memset(ds->onmap, 0, sizeof ds->onmap);
+    memset(ds->goodpos, 0, sizeof ds->goodpos);
+    memset(ds->goodpos_cached, 0, sizeof ds->goodpos_cached);
 
     ds->curdist = 0;
     ds->tslen = 1;
@@ -1168,8 +1182,7 @@ distmap_init(struct distmap_state *ds, int x1, int y1, struct monst *mtmp)
     ds->mon = mtmp;
     ds->mmflags = MM_IGNOREMONST;
 
-    if (flying(mtmp) || levitates(mtmp) || waterwalks(mtmp) ||
-        unbreathing(mtmp))
+    if (aboveliquid(mtmp) || waterwalks(mtmp) || unbreathing(mtmp))
         ds->mmflags |= MM_IGNOREWATER;
 
     struct obj *monwep = MON_WEP(ds->mon);
@@ -1202,8 +1215,13 @@ distmap(struct distmap_state *ds, int x2, int y2)
                 for (dx = -1; dx <= 1; dx++) {
                     if (!isok(x + dx, y + dy))
                         continue;
-                    if (!goodpos(ds->mon->dlevel, x + dx, y + dy,
-                                 ds->mon, ds->mmflags))
+                    if (!ds->goodpos_cached[x + dx][y + dy]) {
+                        ds->goodpos_cached[x + dx][y + dy] = TRUE;
+                        ds->goodpos[x + dx][y + dy] =
+                            goodpos(ds->mon->dlevel, x + dx, y + dy,
+                                    ds->mon, ds->mmflags);
+                    }
+                    if (!ds->goodpos[x + dx][y + dy])
                         continue;
 
                     ds->travelstepx[(ds->curdist + 1) % 2][ds->tslen] = x + dx;
@@ -1479,6 +1497,9 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
 
     init_test_move_cache(&cache);
 
+    /* Don't do [N turns] when moving */
+    print_missed_turncount(TRUE);
+
     /* If we're running, mark the current space to avoid infinite loops. */
     if (thismove == occ_move)
         turnstate.move.stepped_on[u.ux][u.uy] = TRUE;
@@ -1628,7 +1649,7 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
     case uia_chat:
         return dotalk(&newarg);
     case uia_search:
-        return dosearch(&newarg);
+        return dosearch0(0);
     case uia_halt:
         return 0;
     }
@@ -1652,7 +1673,7 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
         u.uy = y = u.ustuck->my;
         mtmp = u.ustuck;
     } else {
-        if (Is_airlevel(&u.uz) && rn2(4) && !Levitation && !Flying) {
+        if (Is_airlevel(&u.uz) && rn2(4) && !levitates(&youmonst) && !Flying) {
             switch (rn2(3)) {
             case 0:
                 pline(msgc_failrandom, "You tumble in place.");
@@ -1822,6 +1843,7 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
                 else
                     pline(msgc_youdiscover,
                           "Wait!  There's something there you can't see!");
+                action_completed();
             } else
                 pline(msgc_yafm, "You bump into %s.", mon_nam(mtmp));
             return 1;
@@ -1905,8 +1927,8 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
                 return 1;
             }
         } else {
-            /* Possibly unwield launcher for ammo unless we're using forcefight. */
-            if (flags.autoswap && uwep &&
+            /* Possibly unwield launcher for ammo unless we're forcefighting. */
+            if (flags.autoswap && uwep && uim != uim_forcefight &&
                 ((uquiver && is_ammo(uquiver) &&
                   ammo_and_launcher(uquiver, uwep) &&
                   (!uswapwep || !ammo_and_launcher(uquiver, uswapwep))) ||
@@ -2038,7 +2060,7 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
         return 1;
     } else if (!youmonst.data->mmove) {
         pline(msgc_cancelled1, "You are rooted %s.",
-              Levitation || Is_airlevel(&u.uz) ||
+              levitates(&youmonst) || Is_airlevel(&u.uz) ||
               Is_waterlevel(&u.uz) ? "in place" : "to the ground");
         action_completed();
         return 1;
@@ -2052,8 +2074,8 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
                 pline(msgc_statusheal, "You free your %s.", body_part(LEG));
             } else if (!(--u.utrap)) {
                 pline(msgc_actionok, "You %s to the edge of the pit.",
-                      (In_sokoban(&u.uz) &&
-                       Levitation) ?
+                      (Sokoban &&
+                       levitates(&youmonst)) ?
                       "struggle against the air currents and float" : u.usteed ?
                       "ride" : "crawl");
                 fill_pit(level, u.ux, u.uy);
@@ -2200,7 +2222,7 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
         if (mtmp->mtrapped && !mtmp->mpeaceful) {
             if (!rn2(mtmp->mtame)) {
                 mtmp->msleeping = 0;
-                msethostility(mtmp, TRUE, FALSE);
+                sethostility(mtmp, TRUE, FALSE);
                 if (mtmp->mleashed)
                     m_unleash(mtmp, TRUE);
                 growl(mtmp);
@@ -2259,7 +2281,7 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
                     if (mtmp->dlevel == level)
                         setmangry(mtmp);
                     else {
-                        msethostility(mtmp, TRUE, FALSE);
+                        sethostility(mtmp, TRUE, FALSE);
                         pline(msgc_alignbad,
                               "It didn't seem very pleased about what you just did...");
                         adjalign(-5);
@@ -2401,7 +2423,7 @@ invocation_message(void)
 
         if (u.usteed)
             buf = msgprintf("beneath %s", y_monnam(u.usteed));
-        else if (Levitation || Flying)
+        else if (levitates(&youmonst) || Flying)
             buf = "beneath you";
         else
             buf = msgprintf("under your %s", makeplural(body_part(FOOT)));
@@ -2440,9 +2462,9 @@ spoteffects(boolean pick)
                       is_ice(level, u.ux, u.uy) ? "ice" : "land");
         } else if (Is_waterlevel(&u.uz))
             goto stillinwater;
-        else if (Levitation)
+        else if (levitates_proper(&youmonst))
             pline(msgc_consequence, "You pop out of the water like a cork!");
-        else if (Flying)
+        else if (flying_proper(&youmonst))
             pline(msgc_consequence, "You fly out of the water.");
         else if (Wwalking)
             pline(msgc_consequence, "You slowly rise above the surface.");
@@ -2457,12 +2479,12 @@ spoteffects(boolean pick)
     }
 
 stillinwater:
-    if (!Levitation && !u.ustuck && !Flying &&
+    if (!levfly_proper(&youmonst) && !u.ustuck &&
         (!u.usteed || !is_clinger(youmonst.data))) {
         /* limit recursive calls through teleds() */
         if (is_pool(level, u.ux, u.uy) || is_lava(level, u.ux, u.uy)) {
             if (u.usteed && !flying(u.usteed) &&
-                !levitates(u.usteed) && !is_clinger(u.usteed->data)) {
+                !levfly_proper(u.usteed) && !is_clinger(u.usteed->data)) {
                 dismount_steed(Underwater ? DISMOUNT_FELL : DISMOUNT_GENERIC);
                 /* dismount_steed() -> float_down() -> pickup() */
                 if (!Is_airlevel(&u.uz) && !Is_waterlevel(&u.uz))
@@ -2475,7 +2497,7 @@ stillinwater:
         }
     }
     check_special_room(FALSE);
-    if (IS_SINK(level->locations[u.ux][u.uy].typ) && Levitation)
+    if (IS_SINK(level->locations[u.ux][u.uy].typ) && levitates(&youmonst))
         dosinkfall();
     if (!in_steed_dismounting) {        /* if dismounting, we'll check again
                                            later */
@@ -2528,7 +2550,7 @@ stillinwater:
             else if (mtmp->mpeaceful) {
                 pline(msgc_levelwarning, "You surprise %s!", Blind &&
                       !sensemon(mtmp) ? "something" : a_monnam(mtmp));
-                msethostility(mtmp, TRUE, FALSE);
+                sethostility(mtmp, TRUE, FALSE);
             } else
                 pline(msgc_levelwarning, "%s attacks you by surprise!",
                       Amonnam(mtmp));
@@ -2918,6 +2940,10 @@ lookaround(enum u_interaction_mode uim)
        case that would matter.  Tempted to delete it with prejudice. */
     boolean aggressive_farmoving = uim != uim_nointeraction && !travelling();
 
+    boolean corridorbranch = flags.corridorbranch;
+    if (flags.occupation == occ_travel)
+        corridorbranch = TRUE;
+
     /* We need to do three things here.  First, make a few checks that are
        independent of the surrounding terrain.  Second, check whether the
        terrain around us makes us want to stop.  And third, if we're doing an
@@ -3027,7 +3053,7 @@ lookaround(enum u_interaction_mode uim)
                        To that end, we check all the corridor spaces around us,
                        and see which one comes closest to the one we came into
                        this function intending to walk into. */
-                    if (flags.corridorbranch) {
+                    if (corridorbranch) {
                         /* i = Euclidean distance between intended space and
                            current candidate.  Use Euclidean distance so that
                            directly adjacent spaces get priority over diagonally
@@ -3065,7 +3091,7 @@ lookaround(enum u_interaction_mode uim)
             } else if (is_pool(level, x, y) || is_lava(level, x, y)) {
                 /* Water and lava only stop you if directly in front, and stop
                    you even if you are running. */
-                if (!Levitation && !Flying && !is_clinger(youmonst.data) &&
+                if (!aboveliquid(&youmonst) &&
                     x == u.ux + turnstate.move.dx &&
                     y == u.uy + turnstate.move.dy)
                     /* No Wwalking check; otherwise they'd be able to test
@@ -3090,7 +3116,7 @@ lookaround(enum u_interaction_mode uim)
             }
         }       /* end for loops */
 
-    if (corrct > 1 && !flags.corridorbranch)
+    if (corrct > 1 && !corridorbranch)
         /* Whoops, we found a branch; we hates those, precious. Better stop.
            This behavior is going to be incredibly annoying, and it'd probably
            be better to fix it so that directed (not directional) fartravel
@@ -3107,7 +3133,7 @@ lookaround(enum u_interaction_mode uim)
     }
 #endif
     /* Check whether it's time to turn. */
-    if (flags.corridorbranch && !noturn && !m0 && i0 &&
+    if (corridorbranch && !noturn && !m0 && i0 &&
         (corrct == 1 || (corrct == 2 && i0 == 1))) {
         turnstate.move.dx = x0 - u.ux;
         turnstate.move.dy = y0 - u.uy;
@@ -3191,13 +3217,39 @@ maybe_wail(void)
     }
 }
 
-void
-losehp(int n, const char *killer)
+/* Returns TRUE if the HP loss resulted in a death, or would have if not
+   polymorphed/lifesaved. */
+boolean
+mlosehp(struct monst *magr, struct monst *mdef, int n, const char *mkiller,
+        int adtyp, const char *killer)
 {
-    xlosehp(n, killer, TRUE);
+    if (mdef == &youmonst)
+        return losehp(n, killer);
+
+    if (DEADMONSTER(mdef)) {
+        panic("Attempting to damage an already dead monster?");
+        return TRUE; /* well, it's dead, so... */
+    }
+
+    mdef->mhp -= n;
+    if (mdef->mhp <= 0) {
+        monkilled(magr, mdef, mkiller, adtyp);
+        return TRUE;
+    }
+
+    if (mdef->mhpmax < mdef->mhp)
+        mdef->mhpmax = mdef->mhp; /* n was negative */
+
+    return FALSE;
 }
 
-void
+boolean
+losehp(int n, const char *killer)
+{
+    return xlosehp(n, killer, TRUE);
+}
+
+boolean
 xlosehp(int n, const char *killer, boolean interrupt)
 {
     /* taking damage wakes you up if sleep resistant. */
@@ -3207,11 +3259,12 @@ xlosehp(int n, const char *killer, boolean interrupt)
         u.mh -= n;
         if (u.mhmax < u.mh)
             u.mhmax = u.mh;
-        if (u.mh < 1)
+        if (u.mh < 1) {
             rehumanize(DIED, killer);
-        else if (n > 0 && u.mh * 10 < u.mhmax && Unchanging)
+            return TRUE;
+        } else if (n > 0 && u.mh * 10 < u.mhmax && Unchanging)
             maybe_wail();
-        return;
+        return FALSE;
     }
 
     u.uhp -= n;
@@ -3222,9 +3275,12 @@ xlosehp(int n, const char *killer, boolean interrupt)
     if (u.uhp < 1) {
         pline(msgc_fatal_predone, "You die...");
         done(DIED, killer);
+        return TRUE;
     } else if (n > 0 && u.uhp * 10 < u.uhpmax) {
         maybe_wail();
     }
+
+    return FALSE;
 }
 
 int
@@ -3245,7 +3301,7 @@ weight_cap(void)
             carrcap = (carrcap * (long)youmonst.data->cwt / WT_HUMAN);
     }
 
-    if (Levitation || Is_airlevel(&u.uz)        /* pugh@cornell */
+    if (levitates(&youmonst) || Is_airlevel(&u.uz)        /* pugh@cornell */
         ||(u.usteed && strongmonst(u.usteed->data)))
         carrcap = MAX_CARR_CAP;
     else {

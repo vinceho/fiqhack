@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-11-15 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-21 */
 /* Copyright (c) Daniel Thaler, 2011 */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -553,13 +553,15 @@ curses_display_menu_core(struct nh_menulist *ml, const char *title, int how,
     if (ml->icount)
         memcpy(item_copy, ml->items, sizeof item_copy);
     struct nh_menuitem *visitem_pointers[ml->icount ? ml->icount : 1];
-    for (i = 0; i < ml->icount; i++)
-        visitem_pointers[i] = item_copy + i;
     int *visselected_pointers[ml->icount ? ml->icount : 1];
-    for (i = 0; i < ml->icount; i++)
-        visselected_pointers[i] = selected + i;
 
     memset(selected, 0, sizeof selected);
+
+    for (i = 0; i < ml->icount; i++) {
+        visitem_pointers[i] = item_copy + i;
+        visselected_pointers[i] = selected + i;
+        selected[i] = visitem_pointers[i]->selected;
+    }
 
     prevcurs = nh_curs_set(0);
 
@@ -611,16 +613,42 @@ curses_display_menu_core(struct nh_menulist *ml, const char *title, int how,
 
         key = nh_wgetch(gw->win, krc_menu);
 
+        if (key == KEY_SIGNAL) {
+            cancelled = TRUE;
+            servercancelled = TRUE;
+            break;
+        }
+
+        if (mdat->how == PICK_LETTER) {
+            if (key >= 'a' && key <= 'z') {
+                /* Since you can choose a letter outside of the menu range,
+                   this needs to bypass the normal results-setting code. */
+                results[0] = key - 'a' + 1;
+                rv = 1;
+                goto cleanup_and_return;
+            } else if (key >= 'A' && key <= 'Z') {
+                results[0] = key - 'A' + 27;
+                rv = 1;
+                goto cleanup_and_return;
+            }
+        }
+        idx = find_accel(key, mdat);
+
+        if (idx != -1 &&    /* valid accelerator */
+            (!changefn || changefn(mdat, idx))) {
+            *(mdat->visselected[idx]) = !*(mdat->visselected[idx]);
+
+            if (mdat->how == PICK_ONE)
+                done = TRUE;
+
+            continue;
+        }
+
         if (!scroll_using_key(&(mdat->s), key, &done))
             switch (key) {
             case KEY_ESCAPE:                /* cancel */
             case '\x1b':
                 cancelled = TRUE;
-                break;
-
-            case KEY_SIGNAL:
-                cancelled = TRUE;
-                servercancelled = TRUE;
                 break;
 
             case '.':                       /* select all (even hidden) */
@@ -636,33 +664,11 @@ curses_display_menu_core(struct nh_menulist *ml, const char *title, int how,
                 break;
 
             case ':':                       /* search for a menu item */
+                /* check if we have a ':' accelerator, just in case */
                 curses_getline("Search:", mdat, menu_search_callback);
                 break;
-
-            /* try to find an item for this key and, if one is found, select it */
+                /* else fall through */
             default:
-                if (mdat->how == PICK_LETTER) {
-                    if (key >= 'a' && key <= 'z') {
-                        /* Since you can choose a letter outside of the menu range,
-                           this needs to bypass the normal results-setting code. */
-                        results[0] = key - 'a' + 1;
-                        rv = 1;
-                        goto cleanup_and_return;
-                    } else if (key >= 'A' && key <= 'Z') {
-                        results[0] = key - 'A' + 27;
-                        rv = 1;
-                        goto cleanup_and_return;
-                    }
-                }
-                idx = find_accel(key, mdat);
-
-                if (idx != -1 &&    /* valid accelerator */
-                    (!changefn || changefn(mdat, idx))) {
-                    *(mdat->visselected[idx]) = !*(mdat->visselected[idx]);
-
-                    if (mdat->how == PICK_ONE)
-                        done = TRUE;
-                }
                 break;
             }
     }
@@ -943,12 +949,12 @@ curses_display_objects(
         memcpy(item_copy, objlist->items, sizeof item_copy);
     struct nh_objitem *visitem_pointers[objlist->icount ? objlist->icount : 1];
     int *visselected_pointers[objlist->icount ? objlist->icount : 1];
+    memset(selected, 0, sizeof selected);
+
     for (i = 0; i < objlist->icount; i++) {
         visitem_pointers[i] = item_copy + i;
         visselected_pointers[i] = selected + i;
     }
-
-    memset(selected, 0, sizeof selected);
 
     if (inventory_special)
         placement_hint = PLHINT_INVENTORY;
@@ -1003,18 +1009,69 @@ curses_display_objects(
 
         key = nh_wgetch(gw->win, krc_objmenu);
 
+        if (key == KEY_SIGNAL) {
+            cancelled = TRUE;
+            servercancelled = TRUE;
+            break;
+        }
+
+        /* selection allows an item count */
+        if (key >= '0' && key <= '9') {
+            if (mdat->selcount == -1)
+                mdat->selcount = 0;
+            mdat->selcount = mdat->selcount * 10 + (key - '0');
+            if (mdat->selcount > 0xffff)
+                mdat->selcount /= 10;
+
+            continue;
+        }
+
+        /* try to find an item for this key and, if one is found, select
+           it */
+        idx = find_objaccel(key, mdat);
+
+        if (idx != -1) {    /* valid item accelerator */
+            if (*mdat->visselected[idx])
+                *mdat->visselected[idx] = 0;
+            else
+                *mdat->visselected[idx] = mdat->selcount;
+            mdat->selcount = -1;
+
+            /* inventory special case: show item actions menu */
+            if (inventory_special) {
+                *mdat->visselected[idx] = 0;
+                if (do_item_actions(mdat->visitems[idx]))
+                    done = TRUE;
+            } else if (mdat->how == PICK_ONE)
+                done = TRUE;
+            continue;
+
+        } else if (mdat->how == PICK_ANY) { /* group accel? */
+            int grouphits = 0;
+
+            for (i = 0; i < mdat->s.linecount; i++) {
+                if (mdat->visitems[i]->group_accel == key &&
+                    mdat->visitems[i]->oclass != -1) {
+                    if (*mdat->visselected[i] == mdat->selcount)
+                        *mdat->visselected[i] = 0;
+                    else
+                        *mdat->visselected[i] = mdat->selcount;
+                    grouphits++;
+                }
+            }
+
+            if (grouphits) {
+                mdat->selcount = -1;
+                continue;
+            }
+        }
+
         if (!scroll_using_key(&(mdat->s), key, &done))
             switch (key) {
             case KEY_ESCAPE:                       /* cancel */
             case '\x1b':
                 cancelled = TRUE;
                 break;
-
-            case KEY_SIGNAL:
-                cancelled = TRUE;
-                servercancelled = TRUE;
-                break;
-
 
             case '.':                              /* select all */
                 if (mdat->how == PICK_ANY)
@@ -1062,64 +1119,17 @@ curses_display_objects(
                         *mdat->visselected[i] = *mdat->visselected[i] ? 0 : -1;
                 break;
 
-            case ':':                              /* search for a menu item */
-                curses_getline("Search:", mdat, menu_search_callback);
-                break;
-
             case KEY_BACKSPACE:                    /* edit selection count */
                 mdat->selcount /= 10;
                 if (mdat->selcount == 0)
                     mdat->selcount = -1;    /* -1: select all */
                 break;
 
+            case ':':                              /* search for a menu item */
+                curses_getline("Search:", mdat, menu_search_callback);
+                break;
+                /* else fall through */
             default:
-                /* selection allows an item count */
-                if (key >= '0' && key <= '9') {
-                    if (mdat->selcount == -1)
-                        mdat->selcount = 0;
-                    mdat->selcount = mdat->selcount * 10 + (key - '0');
-                    if (mdat->selcount > 0xffff)
-                        mdat->selcount /= 10;
-
-                    break;
-                }
-
-                /* try to find an item for this key and, if one is found, select
-                   it */
-                idx = find_objaccel(key, mdat);
-
-                if (idx != -1) {    /* valid item accelerator */
-                    if (*mdat->visselected[idx])
-                        *mdat->visselected[idx] = 0;
-                    else
-                        *mdat->visselected[idx] = mdat->selcount;
-                    mdat->selcount = -1;
-
-                    /* inventory special case: show item actions menu */
-                    if (inventory_special) {
-                        *mdat->visselected[idx] = 0;
-                        if (do_item_actions(mdat->visitems[idx]))
-                            done = TRUE;
-                    } else if (mdat->how == PICK_ONE)
-                        done = TRUE;
-
-                } else if (mdat->how == PICK_ANY) { /* group accel? */
-                    int grouphits = 0;
-
-                    for (i = 0; i < mdat->s.linecount; i++) {
-                        if (mdat->visitems[i]->group_accel == key &&
-                            mdat->visitems[i]->oclass != -1) {
-                            if (*mdat->visselected[i] == mdat->selcount)
-                                *mdat->visselected[i] = 0;
-                            else
-                                *mdat->visselected[i] = mdat->selcount;
-                            grouphits++;
-                        }
-                    }
-
-                    if (grouphits)
-                        mdat->selcount = -1;
-                }
                 break;
             }
     }

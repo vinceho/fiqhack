@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-11 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-25 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -195,14 +195,14 @@ flooreffects(struct obj * obj, int x, int y, const char *verb)
         return fire_damage(obj, FALSE, TRUE, x, y);
     } else if (is_pool(lev, x, y)) {
         /* Reasonably bulky objects (arbitrary) splash when dropped. If you're
-           floating above the water even small things make noise. Stuff dropped 
+           floating above the water even small things make noise. Stuff dropped
            near fountains always misses. */
-        if ((Blind || (Levitation || Flying)) && canhear() &&
+        if ((Blind || aboveliquid(&youmonst)) && canhear() &&
             ((x == u.ux) && (y == u.uy))) {
             if (!Underwater) {
                 if (weight(obj) > 9) {
                     pline(msgc_consequence, "Splash!");
-                } else if (Levitation || Flying) {
+                } else if (aboveliquid(&youmonst)) {
                     pline(msgc_consequence, "Plop!");
                 }
             }
@@ -317,7 +317,7 @@ dosinkring(struct obj *obj)  /* obj is a ring being dropped over a sink */
     giveback:
         /* this is safe, the ring was unwielded by the caller */
         dropx(obj);
-        makeknown(obj->otyp);
+        tell_discovery(obj);
         return;
     case RIN_LEVITATION:
         pline(msgc_info, "The sink quivers upward for a moment.");
@@ -433,9 +433,14 @@ dosinkring(struct obj *obj)  /* obj is a ring being dropped over a sink */
         }
     }
     if (ideed)
-        makeknown(obj->otyp);
-    else
+        tell_discovery(obj);
+    else {
         You_hear(msgc_info, "the ring bouncing down the drainpipe.");
+
+        /* only rings of hunger do this if not blind, so ID it anyway. */
+        if (!Blind && obj->otyp == RIN_HUNGER)
+            tell_discovery(obj);
+    }
 
     /* A custom RNG would be nice here, but I can't see a way to make it work
        without having a different RNG for each class of ring, which would be
@@ -606,7 +611,7 @@ dropy(struct obj *obj)
         else
             sellobj(obj, u.ux, u.uy);
         stackobj(obj);
-        if (Blind && Levitation)
+        if (Blind && levitates(&youmonst))
             map_object(obj, 0, FALSE);
         newsym(u.ux, u.uy);     /* remap location under self */
     }
@@ -627,9 +632,8 @@ obj_no_longer_held(struct obj *obj)
     }
     switch (obj->otyp) {
     case CRYSKNIFE:
-        /* KMH -- Fixed crysknives have only 10% chance of reverting */
         /* only changes when not held by player or monster */
-        if (!obj->oerodeproof || !rn2_on_rng(10, rng_unfix_crysknife)) {
+        if (!obj->oerodeproof) {
             obj->otyp = WORM_TOOTH;
             obj->oerodeproof = 0;
         }
@@ -814,7 +818,7 @@ dodown(const struct nh_cmd_arg *arg, boolean autodig_ok)
     } else if (u.usteed && u.usteed->meating) {
         pline(msgc_cancelled, "%s is still eating.", Monnam(u.usteed));
         return 0;
-    } else if (Levitation) {
+    } else if (levitates(&youmonst)) {
         unsigned controlled_lev = levitates_at_will(&youmonst, FALSE, FALSE);
         if (controlled_lev) {
             /* end controlled levitation */
@@ -839,7 +843,8 @@ dodown(const struct nh_cmd_arg *arg, boolean autodig_ok)
         }
         return 0;       /* didn't move */
     }
-    if (!stairs_down && !ladder_down) {
+    if (!turnstate.continue_message ||
+        (!stairs_down && !ladder_down)) {
         boolean can_fall;
 
         trap = t_at(level, u.ux, u.uy);
@@ -942,10 +947,11 @@ dodown(const struct nh_cmd_arg *arg, boolean autodig_ok)
 int
 doup(const struct nh_cmd_arg *arg)
 {
-    if ((u.ux != level->upstair.sx || u.uy != level->upstair.sy)
-        && (u.ux != level->upladder.sx || u.uy != level->upladder.sy)
-        && (u.ux != level->sstairs.sx || u.uy != level->sstairs.sy ||
-            !level->sstairs.up)) {
+    if (!turnstate.continue_message ||
+        ((u.ux != level->upstair.sx || u.uy != level->upstair.sy) &&
+         (u.ux != level->upladder.sx || u.uy != level->upladder.sy) &&
+         (u.ux != level->sstairs.sx || u.uy != level->sstairs.sy ||
+          !level->sstairs.up))) {
         coord cc;
         if (arg && find_remembered_stairs(TRUE, &cc)) {
             flags.travelcc.x = cc.x;
@@ -1177,7 +1183,7 @@ goto_level(d_level * newlevel, boolean at_stairs, boolean falling,
                     u_on_dnstairs();
             }
             /* Remove bug which crashes with levitation/punishment KAA */
-            if (Punished && !Levitation) {
+            if (Punished && !levitates(&youmonst)) {
                 pline(msgc_actionboring,
                       "With great effort you climb the %s.",
                       at_ladder ? "ladder" : "stairs");

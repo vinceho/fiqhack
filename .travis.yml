@@ -13,7 +13,9 @@ script:
 
 notifications:
     irc:
-        channels: "chat.freenode.net#nethack4"
+        channels:
+          - "chat.freenode.net#nethack4"
+          - "ircs://chat.freenode.net:7070#ascension.run"
         on_success: always
         on_failure: always
         template:

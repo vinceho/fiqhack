@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-13 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -824,9 +824,9 @@ restore_you(struct memfile *mf, struct you *y)
         y->uconduct_time[i] = mread32(mf);
     }
     for (i = 0; i < P_NUM_SKILLS; i++) {
-        y->weapon_skills[i].skill = mread8(mf);
-        y->weapon_skills[i].max_skill = mread8(mf);
-        y->weapon_skills[i].advance = mread16(mf);
+        y->unused_weapon_skills[i].skill = mread8(mf);
+        y->unused_weapon_skills[i].max_skill = mread8(mf);
+        y->unused_weapon_skills[i].advance = mread16(mf);
     }
 
     restore_quest_status(mf, &y->quest_status);
@@ -1005,9 +1005,10 @@ restore_flags(struct memfile *mf, struct flag *f)
 
     f->double_troubled = mread8(mf);
     f->autounlock = mread8(mf);
+    f->msg_hints = mread8(mf);
 
     /* Ignore the padding added in save.c */
-    for (i = 0; i < 97; i++)
+    for (i = 0; i < 96; i++)
         (void) mread8(mf);
 
     mread(mf, f->setseed, sizeof (f->setseed));
@@ -1076,6 +1077,16 @@ dorecover(struct memfile *mf)
     if (flags.save_revision < 5) {
         youmonst.pw = u.unused_uen;
         youmonst.pwmax = u.unused_uenmax;
+    }
+    if (flags.save_revision < 16) {
+        /* Don't use a macro, we want to iterate as many as we had by the time
+           we added this logic. */
+        int i;
+        for (i = 0; i < 41; i++) {
+            P_SKILL(i) = u.unused_weapon_skills[i].skill;
+            P_MAX_SKILL(i) = u.unused_weapon_skills[i].max_skill;
+            P_ADVANCE(i) = u.unused_weapon_skills[i].advance;
+        }
     }
 
     /* restore dungeon */
@@ -1393,6 +1404,11 @@ getlev(struct memfile *mf, xchar levnum, boolean ghostly)
     lev->flags.is_maze_lev = (lflags >> 16) & 1;
     lev->flags.is_cavernous_lev = (lflags >> 15) & 1;
     lev->flags.arboreal = (lflags >> 14) & 1;
+    lev->flags.sokoban_rules = (lflags >> 13) & 1;
+
+    if (flags.save_revision < 17)
+        if (In_sokoban(&lev->z))
+            lev->flags.sokoban_rules = TRUE;
 
     restore_coords(mf, lev->doors, DOORMAX);
     rest_rooms(mf, lev);        /* No joke :-) */
@@ -1426,6 +1442,9 @@ getlev(struct memfile *mf, xchar levnum, boolean ghostly)
 
     rest_worm(mf, lev); /* restore worm information */
     lev->lev_traps = restore_traps(mf);
+    if (flags.save_revision < 17)
+        check_sokoban_completion(lev, TRUE);
+
     restobjchn(mf, lev, ghostly, FALSE, &lev->objlist, &table);
     find_lev_obj(lev);
     /* restobjchn()'s `frozen' argument probably ought to be a callback routine

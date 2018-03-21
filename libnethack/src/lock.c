@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-14 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-16 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -373,7 +373,7 @@ pick_lock(struct obj *pick, const struct nh_cmd_arg *arg, struct obj *cobj)
 
         if (dz < 0) {
             pline(msgc_cancelled, "There isn't any sort of lock up %s.",
-                  Levitation ? "here" : "there");
+                  levitates(&youmonst) ? "here" : "there");
             return 0;
         } else if (is_lava(level, u.ux, u.uy)) {
             pline(msgc_cancelled, "Doing that would probably melt your %s.",
@@ -598,8 +598,8 @@ doopen(const struct nh_cmd_arg *arg)
     if (!isok(cc.x, cc.y))
         return 0;
 
-    if ((cc.x == u.ux) && (cc.y == u.uy))
-        return 0;
+    if (cc.x == u.ux && cc.y == u.uy)
+        return doloot(arg);
 
     if ((mtmp = m_at(level, cc.x, cc.y)) && mtmp->m_ap_type == M_AP_FURNITURE &&
         (mtmp->mappearance == S_hcdoor || mtmp->mappearance == S_vcdoor) &&

@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-19 */
+/* Last modified by Fredrik Ljungdahl, 2018-01-20 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -290,7 +290,7 @@ dofire(const struct nh_cmd_arg *arg)
         if (sp_no < MAXSPELL && spl_book[sp_no].sp_id == u.spellquiver &&
             spellknow(sp_no)) {
             m.spell = u.spellquiver;
-            return spelleffects(FALSE, &m);
+            return spelleffects(FALSE, &m, FALSE);
         }
     }
 
@@ -316,7 +316,8 @@ dofire(const struct nh_cmd_arg *arg)
     /* It can be reasonable to fire rocks without a sling. Otherwise,
        force the usage of 't' for ammo that needs a launcher when
        the proper launcher isn't wielded. */
-    if (uquiver && is_ammo(uquiver) && uquiver->oclass != GEM_CLASS &&
+    if (uquiver && is_ammo(uquiver) &&
+        (uquiver->oclass != GEM_CLASS || carrying(SLING)) &&
         !ammo_and_launcher(uquiver, uwep)) {
         /* First however, check if we have the proper launcher in offhand and neither
            is (knowingly) cursed. */
@@ -565,7 +566,7 @@ hurtle_step(void *arg, int x, int y)
     if ((u.ux - x) && (u.uy - y) && bad_rock(&youmonst, u.ux, y) &&
         bad_rock(&youmonst, x, u.uy)) {
         /* Move at a diagonal. */
-        if (In_sokoban(&u.uz)) {
+        if (Sokoban) {
             pline(msgc_cancelled1, "You come to an abrupt halt!");
             return FALSE;
         }
@@ -593,7 +594,7 @@ hurtle_step(void *arg, int x, int y)
             dotrap(ttmp, 0);
         } else if ((ttmp->ttyp == PIT || ttmp->ttyp == SPIKED_PIT ||
                     ttmp->ttyp == HOLE || ttmp->ttyp == TRAPDOOR) &&
-                   In_sokoban(&u.uz)) {
+                   Sokoban) {
             /* Air currents overcome the recoil */
             dotrap(ttmp, 0);
             *range = 0;
@@ -696,7 +697,7 @@ hurtle(int dx, int dy, int range, boolean verbose)
                       m_shot.s ? "shoot" : "throw", m_shot.s ? "shot" : "toss");
         m_shot.n = m_shot.i;    /* make current shot be the last */
     }
-    if (In_sokoban(&u.uz))
+    if (Sokoban)
         change_luck(-1);        /* Sokoban guilt */
     uc.x = u.ux;
     uc.y = u.uy;
@@ -1055,7 +1056,7 @@ fire_obj(int ddx, int ddy, int range,   /* direction and range */
                         pline(msgc_yafm, "%s jerks to an abrupt halt.",
                               The(distant_name(obj, xname))); /* lame */
                     range = 0;
-                } else if (In_sokoban(&u.uz) && (t = t_at(level, x, y)) != 0 &&
+                } else if (Sokoban && (t = t_at(level, x, y)) != 0 &&
                            (t->ttyp == PIT || t->ttyp == SPIKED_PIT ||
                             t->ttyp == HOLE || t->ttyp == TRAPDOOR)) {
                     /* hero falls into the trap, so ball stops */
@@ -1071,67 +1072,9 @@ fire_obj(int ddx, int ddy, int range,   /* direction and range */
     return NULL;
 }
 
-struct monst *
-boomhit(int dx, int dy)
-{
-    int i, ct;
-    int boom = E_boomleft;      /* showsym[] index */
-    struct monst *mtmp;
-    struct tmp_sym *tsym;
-
-    bhitpos.x = u.ux;
-    bhitpos.y = u.uy;
-
-    for (i = 0; i < 8; i++)
-        if (xdir[i] == dx && ydir[i] == dy)
-            break;
-    tsym = tmpsym_init(DISP_FLASH, dbuf_effect(E_MISC, boom));
-    for (ct = 0; ct < 10; ct++) {
-        if (i == 8)
-            i = 0;
-        boom = (boom == E_boomleft) ? E_boomright : E_boomleft;
-        tmpsym_change(tsym, dbuf_effect(E_MISC, boom)); /* change glyph */
-        dx = xdir[i];
-        dy = ydir[i];
-        bhitpos.x += dx;
-        bhitpos.y += dy;
-        if (MON_AT(level, bhitpos.x, bhitpos.y)) {
-            mtmp = m_at(level, bhitpos.x, bhitpos.y);
-            m_respond(mtmp);
-            tmpsym_end(tsym);
-            return mtmp;
-        }
-        if (!ZAP_POS(level->locations[bhitpos.x][bhitpos.y].typ) ||
-            closed_door(level, bhitpos.x, bhitpos.y)) {
-            bhitpos.x -= dx;
-            bhitpos.y -= dy;
-            break;
-        }
-        if (bhitpos.x == u.ux && bhitpos.y == u.uy) {   /* ct == 9 */
-            if (Fumbling || rn2(20) >= ACURR(A_DEX)) {
-                /* we hit ourselves */
-                thitu(10, rnd(10), NULL, "boomerang");
-                break;
-            } else {    /* we catch it */
-                tmpsym_end(tsym);
-                pline(msgc_actionok, "You skillfully catch the boomerang.");
-                return &youmonst;
-            }
-        }
-        tmpsym_at(tsym, bhitpos.x, bhitpos.y);
-        win_delay_output();
-        if (ct % 5 != 0)
-            i++;
-        if (IS_SINK(level->locations[bhitpos.x][bhitpos.y].typ))
-            break;      /* boomerang falls on sink */
-    }
-    tmpsym_end(tsym);   /* do not leave last symbol */
-    return NULL;
-}
-
 void
 throwit(struct obj *obj, struct obj *stack,
-        long wep_mask, /* used to re-equip returning boomerang 
+        long wep_mask, /* used to re-equip returning boomerang
                                          */
         boolean twoweap,        /* used to restore twoweapon mode if wielded
                                    weapon returns */
@@ -1141,6 +1084,10 @@ throwit(struct obj *obj, struct obj *stack,
     int range, urange;
     boolean impaired = (Confusion || Stunned || Blind || Hallucination ||
                         Fumbling);
+    boolean returning = FALSE;
+    if ((Role_if(PM_VALKYRIE) && obj->oartifact == ART_MJOLLNIR) ||
+        obj->otyp == BOOMERANG)
+        returning = TRUE;
 
     obj->was_thrown = 1;
     if ((obj->cursed || obj->greased) && (dx || dy) && !rn2(7)) {
@@ -1187,13 +1134,15 @@ throwit(struct obj *obj, struct obj *stack,
         bhitpos.x = mon->mx;
         bhitpos.y = mon->my;
     } else if (dz) {
-        if (dz < 0 && Role_if(PM_VALKYRIE) && obj->oartifact == ART_MJOLLNIR &&
-            !impaired) {
+        if (dz < 0 && returning && !impaired) {
             pline(msgc_yafm, "%s the %s and returns to your hand!",
                   Tobjnam(obj, "hit"), ceiling(u.ux, u.uy));
             obj = pickinv(obj);
-            setuwep(obj);
-            u.twoweap = twoweap;
+            if (wep_mask & W_MASK(os_wep)) {
+                setuwep(obj);
+                u.twoweap = twoweap;
+            } else
+                obj->owornmask = wep_mask;
         } else if (dz < 0 && !Is_airlevel(&u.uz) && !Underwater &&
                    !Is_waterlevel(&u.uz)) {
             toss_up(obj, rn2(5));
@@ -1203,26 +1152,12 @@ throwit(struct obj *obj, struct obj *stack,
         thrownobj = NULL;
         return;
 
-    } else if (obj->otyp == BOOMERANG && !Underwater) {
-        if (Is_airlevel(&u.uz) || Levitation)
-            hurtle(-dx, -dy, 1, TRUE);
-        mon = boomhit(dx, dy);
-        if (mon == &youmonst) { /* the thing was caught */
-            exercise(A_DEX, TRUE);
-            obj = pickinv(obj);
-            if (wep_mask && !(obj->owornmask & wep_mask)) {
-                setworn(obj, wep_mask);
-                u.twoweap = twoweap;
-            }
-            thrownobj = NULL;
-            return;
-        }
     } else {
         boolean obj_destroyed;
 
         urange = (int)(ACURR(A_STR)) / 2;
         /* balls are easy to throw or at least roll */
-        /* also, this insures the maximum range of a ball is greater than 1, so 
+        /* also, this insures the maximum range of a ball is greater than 1, so
            the effects from throwing attached balls are actually possible */
         if (obj->otyp == HEAVY_IRON_BALL)
             range = urange - (int)(obj->owt / 100);
@@ -1244,7 +1179,7 @@ throwit(struct obj *obj, struct obj *stack,
                 range /= 2;
         }
 
-        if (Is_airlevel(&u.uz) || Levitation) {
+        if (Is_airlevel(&u.uz) || levitates(&youmonst)) {
             /* action, reaction... */
             urange -= range;
             if (urange < 1)
@@ -1268,7 +1203,7 @@ throwit(struct obj *obj, struct obj *stack,
         mon = fire_obj(dx, dy, range, THROWN_WEAPON, obj, &obj_destroyed);
 
         /* have to do this after fire_obj() so u.ux & u.uy are correct */
-        if (Is_airlevel(&u.uz) || Levitation)
+        if (Is_airlevel(&u.uz) || levitates(&youmonst))
             hurtle(-dx, -dy, urange, TRUE);
 
         if (obj_destroyed)
@@ -1304,19 +1239,21 @@ throwit(struct obj *obj, struct obj *stack,
             mpickobj(u.ustuck, obj, NULL);
     } else {
         /* the code following might become part of dropy() */
-        if (obj->oartifact == ART_MJOLLNIR && Role_if(PM_VALKYRIE) &&
-            rn2_on_rng(100, rng_mjollnir_return)) {
+        if (returning && !impaired && (obj->oartifact || rn2(ACURR(A_DEX)))) {
             /* we must be wearing Gauntlets of Power to get here */
             sho_obj_return_to_u(obj, dx, dy);   /* display its flight */
 
-            int dmg = rn2_on_rng(2, rng_mjollnir_return);
+            int dmg = rn2(10);
 
-            if (rn2_on_rng(100, rng_mjollnir_return) && !impaired) {
+            if (rn2(ACURR(A_DEX))) {
                 pline(msgc_actionok, "%s to your hand!",
                       Tobjnam(obj, "return"));
                 obj = pickinv(obj);
-                setuwep(obj);
-                u.twoweap = twoweap;
+                if (wep_mask & W_MASK(os_wep)) {
+                    setuwep(obj);
+                    u.twoweap = twoweap;
+                } else
+                    obj->owornmask = wep_mask;
                 if (cansee(bhitpos.x, bhitpos.y))
                     newsym(bhitpos.x, bhitpos.y);
             } else {
@@ -1324,7 +1261,7 @@ throwit(struct obj *obj, struct obj *stack,
                     pline(msgc_substitute, Blind ? "%s lands %s your %s." :
                           "%s back to you, landing %s your %s.",
                           Blind ? "Something" : Tobjnam(obj, "return"),
-                          Levitation ? "beneath" : "at",
+                          levitates(&youmonst) ? "beneath" : "at",
                           makeplural(body_part(FOOT)));
                 } else {
                     dmg += rnd(3);
@@ -1332,7 +1269,8 @@ throwit(struct obj *obj, struct obj *stack,
                           "%s back toward you, hitting your %s!",
                           Tobjnam(obj, Blind ? "hit" : "fly"),
                           body_part(ARM));
-                    artifact_hit(NULL, &youmonst, obj, &dmg, 0);
+                    if (obj->oartifact)
+                        artifact_hit(NULL, &youmonst, obj, &dmg, 0);
                     losehp(dmg, killer_msg_obj(DIED, obj));
                 }
                 if (ship_object(obj, u.ux, u.uy, FALSE)) {
@@ -1768,7 +1706,7 @@ gem_accept(struct monst *mon, struct obj *obj)
     const char *buf = Monnam(mon);
     enum msg_channel msgc = msgc_nospoil;
 
-    msethostility(mon, FALSE, FALSE);
+    sethostility(mon, FALSE, FALSE);
     mon->mavenge = 0;
 
     if (obj->dknown && objects[obj->otyp].oc_name_known) {

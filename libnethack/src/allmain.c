@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2017-12-18 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-05 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -23,8 +23,6 @@ static void pre_move_tasks(boolean, boolean);
 static void newgame(microseconds birthday, struct newgame_options *ngo);
 
 static void handle_lava_trap(boolean didmove);
-
-static void command_input(int cmdidx, struct nh_cmd_arg *arg);
 
 static void decrement_helplessness(void);
 
@@ -361,6 +359,19 @@ nh_create_game(int fd, struct nh_option_desc *opts_orig)
     terminate(GAME_CREATED);
 }
 
+void
+print_missed_turncount(boolean silent)
+{
+    struct eyou *you = mx_eyou(&youmonst);
+    if (!you)
+        return;
+
+    int oldmoves = you->oldmoves;
+    you->oldmoves = moves;
+    if (!silent && oldmoves && (moves - oldmoves) > 1)
+        pline(msgc_actionboring, "[%d turns]", moves - oldmoves);
+}
+
 enum nh_play_status
 nh_play_game(int fd, enum nh_followmode followmode)
 {
@@ -376,7 +387,7 @@ nh_play_game(int fd, enum nh_followmode followmode)
         return ERR_BAD_FILE;
     case LS_DONE:
         if (followmode != FM_REPLAY && followmode != FM_RECOVERQUIT) {
-#ifdef PUBLIC_SERVER
+#if 0
             /* assume only one process at most, so this is safe */
             followmode = FM_RECOVERQUIT;
 #else
@@ -384,7 +395,8 @@ nh_play_game(int fd, enum nh_followmode followmode)
             followmode = FM_REPLAY; /* force into replay mode */
             file_done = TRUE;
 #endif
-        }
+        } else if (followmode == FM_REPLAY)
+            file_done = TRUE;
         break;
     case LS_CRASHED:
         return ERR_RESTORE_FAILED;
@@ -478,7 +490,8 @@ nh_play_game(int fd, enum nh_followmode followmode)
     program_state.game_running = TRUE;
     post_init_tasks();
 
-just_reloaded_save:
+    replay_init();
+
     /* While loading a save file, we don't do rendering, and we don't run
        the vision system. Do all that stuff now. */
     vision_reset();
@@ -506,10 +519,8 @@ just_reloaded_save:
             cmdidx = get_command_idx("wait");
             cmd.arg.argtype = 0;
         } else {
-
-            if (((program_state.followmode == FM_REPLAY &&
-                  (!flags.incomplete || flags.interrupted)) ||
-                 !log_replay_command(&cmd))) {
+            if (replay_want_userinput() ||
+                !log_replay_command(&cmd)) {
                 if (program_state.followmode == FM_RECOVERQUIT) {
                     /* We shouldn't be here. */
                     paniclog("recoverquit",
@@ -518,12 +529,15 @@ just_reloaded_save:
                               "sequence did not replay correctly.");
                     terminate(GAME_ALREADY_OVER);
                 }
-                (*windowprocs.win_request_command)
-                    (wizard, program_state.followmode == FM_PLAY ?
-                     !flags.incomplete : 1, flags.interrupted,
-                     &cmd, msg_request_command_callback);
+                do {
+                    (*windowprocs.win_request_command)
+                        (wizard, program_state.followmode == FM_PLAY ?
+                         !flags.incomplete : 1, flags.interrupted,
+                         &cmd, msg_request_command_callback);
+                } while (replay_delay());
                 command_from_user = TRUE;
-            }
+            } else
+                replay_set_action();
 
             cmdidx = get_command_idx(cmd.cmd);
         }
@@ -536,95 +550,17 @@ just_reloaded_save:
         if (program_state.followmode != FM_PLAY && command_from_user &&
             !(cmdlist[cmdidx].flags & CMD_NOTIME)) {
 
-            /* TODO: Add a "seek to specific turn" command */
-
-            /* If we got a direction as part of the command, and we're
-               replaying, move forwards or backwards respectively. */
-            if (program_state.followmode == FM_REPLAY &&
-                cmd.arg.argtype & CMD_ARG_DIR) {
-                int moveswas = moves;
-                switch (cmd.arg.dir) {
-                case DIR_E:
-                case DIR_S:
-                forward_one_turn:
-                    /* Move forwards one command (and thus to the next neutral
-                       turnstate, because we don't ask for a command outside
-                       neutral turnstate on a replay). */
-                    log_replay_command(&cmd);
-                    command_from_user = FALSE;
-                    cmdidx = get_command_idx(cmd.cmd);
-                    if (cmdidx < 0)
-                        panic("Invalid command '%s' replayed from save file",
-                              cmd.cmd);
-                    break;
-                case DIR_W:
-                case DIR_N:
-                    /* Move backwards one command. */
-                    log_sync(program_state.binary_save_location-1,
-                             TLU_BYTES, FALSE);
-                    goto just_reloaded_save;
-                case DIR_NW:
-                    /* Move to turn 1. */
-                    log_sync(1, TLU_TURNS, FALSE);
-                    goto just_reloaded_save;
-                case DIR_SW:
-                    /* Move to the end of the replay. */
-                    log_sync(0, TLU_EOF, FALSE);
-                    goto just_reloaded_save;
-                case DIR_NE:
-                    /* Move backwards 50 turns. Avoid wrap-around */
-                    if (moves <= 50)
-                        log_sync(1, TLU_TURNS, FALSE);
-                    else
-                        log_sync(moves - 50, TLU_TURNS, FALSE);
-                    goto just_reloaded_save;
-                case DIR_SE:
-                    /* Move forwards 50 turns. */
-                    log_sync(moves + 50, TLU_TURNS, FALSE);
-                    if (moves == moveswas) {
-                        /* If we moved forwards no more than a turn (because
-                           the following turn had a >50-move action), go to
-                           the move after that. */
-                        goto forward_one_turn;
-                    }
-                    goto just_reloaded_save;
-                default:
-                    pline(msgc_mispaste,
-                          "That direction has no meaning while replaying.");
-                    continue;
-                }
-            } else if (!strcmp(cmd.cmd, "grope") &&
-                       program_state.followmode == FM_REPLAY) {
-                /* go to a specific turn */
-                int trycnt = 0;
-                int turn = 0;
-                const char *buf;
-                const char *qbuf = "To what turn would you like to go to?";
-                do {
-                    if (++trycnt == 2)
-                        qbuf = msgcat(qbuf, " [type a number above 0]");
-
-                    (*windowprocs.win_getlin) (qbuf, &buf, msg_getlin_callback);
-                } while (!turn && strcmp(buf, "\033") && !digit(buf[0]) && trycnt < 10);
-
-                if (trycnt == 10 || !strcmp(buf, "\033"))
-                    continue; /* aborted or refused to input a number 10 times */
-
-                turn = atoi(buf);
-                log_sync(turn, TLU_TURNS, FALSE);
-                goto just_reloaded_save;
-            } else if (!strcmp(cmd.cmd, "drink") &&
-                       program_state.followmode == FM_WATCH) {
-                terminate(GAME_DETACHED);
+            if (program_state.followmode == FM_REPLAY) {
+                replay_parse_command(cmd);
+                continue;
             } else {
                 /* Internal commands weren't sent by the player, so don't
                    complain about them, just ignore them. Ditto for repeat. */
                 if (!(cmdlist[cmdidx].flags & CMD_INTERNAL) &&
                     cmdlist[cmdidx].func)
                     pline(msgc_cancelled,
-                          "Command '%s' is unavailable while %s.", cmd.cmd,
-                          program_state.followmode == FM_WATCH ?
-                          "watching" : "replaying");
+                          "Command '%s' is unavailable while watching.",
+                          cmd.cmd);
                 continue;
             }
         }
@@ -708,8 +644,10 @@ just_reloaded_save:
             if (!flags.incomplete)
                 log_revert_command(cmd.cmd);
         } else if ((!flags.incomplete || flags.interrupted) &&
-                 !u_helpless(hm_all))
+                   !u_helpless(hm_all)) {
             neutral_turnstate_tasks();
+        }
+
         /* Note: neutral_turnstate_tasks() frees cmd (because it frees all
            messages, and we made cmd a message in our callback above), so don't
            use it past this point */
@@ -746,9 +684,6 @@ you_moved(void)
                taken 0 more actions than the global. */
 
             monscanmove = movemon();
-
-            if (flags.servermail)
-                checkformail();
 
             update_obj_memories(level);
             /* Now both players and monsters have taken 1 more action than the
@@ -801,31 +736,6 @@ you_moved(void)
                 u.moveamt -= 4;
                 u.moveamt += rn2(9);
             }
-
-            switch (wtcap) {
-            case UNENCUMBERED:
-                break;
-            case SLT_ENCUMBER:
-                u.moveamt -= (u.moveamt / 4);
-                break;
-            case MOD_ENCUMBER:
-                u.moveamt -= (u.moveamt / 2);
-                break;
-            case HVY_ENCUMBER:
-                u.moveamt -= ((u.moveamt * 3) / 4);
-                break;
-            case EXT_ENCUMBER:
-                u.moveamt -= ((u.moveamt * 7) / 8);
-                break;
-            default:
-                break;
-            }
-
-            /* Avoid an infinite loop on corner cases (e.g. polyinit to blue
-               jelly), by limiting how long the player can be stuck without
-               movement points. */
-            if (u.moveamt < 1)
-                u.moveamt = 1;
 
             /* Adjust the move offset for the change in speed. */
             adjust_move_offset(&youmonst, oldmoveamt, u.moveamt);
@@ -922,11 +832,21 @@ you_moved(void)
                 }
             }
 
-            if (youmonst.pw < youmonst.pwmax && wtcap < MOD_ENCUMBER) {
-                youmonst.pw +=
-                    regeneration_by_rate(regen_rate(&youmonst, TRUE));
+            int pwrate = regeneration_by_rate(regen_rate(&youmonst, TRUE));
+            if (pwrate < 0 ||
+                (youmonst.pw < youmonst.pwmax && wtcap < MOD_ENCUMBER)) {
+                youmonst.pw += pwrate;
+
                 if (youmonst.pw > youmonst.pwmax)
                     youmonst.pw = youmonst.pwmax;
+                else if (youmonst.pw < 0) {
+                    youmonst.pw = 0;
+                    if (youmonst.spells_maintained) {
+                        pline(msgc_intrloss,
+                              "You can no longer maintain any spells.");
+                        youmonst.spells_maintained = 0;
+                    }
+                }
             }
 
             if (!hpfull && *hp == *hpmax)
@@ -1007,7 +927,7 @@ you_moved(void)
                 under_ground(0);
 
             if (!u.umoved && (Is_waterlevel(&u.uz) ||
-                              !(Flying || Levitation))) {
+                              !aboveliquid(&youmonst))) {
                 if (Underwater)
                     drown();
                 else if (is_lava(level, u.ux, u.uy))
@@ -1182,6 +1102,8 @@ helpless(int turns, enum helpless_reason reason, const char *cause,
     turnstate.helpless_timers[reason] = turns;
 
     if (reason == hr_asleep || reason == hr_fainted) {
+        /* Reset blindness trinsic cache */
+        clear_property_cache(&youmonst, BLINDED);
         turnstate.vision_full_recalc = 1;
         see_monsters(FALSE);
         see_objects(FALSE);
@@ -1419,7 +1341,7 @@ break_conduct(enum player_conduct conduct)
 }
 
 /* perform the command given by cmdidx (an index into cmdlist in cmd.c) */
-static void
+void
 command_input(int cmdidx, struct nh_cmd_arg *arg)
 {
     boolean didmove = TRUE;
@@ -1479,6 +1401,8 @@ newgame(microseconds birthday, struct newgame_options *ngo)
 
     flags.turntime = birthday;       /* get realtime right for level gen */
 
+    mx_ecache_new(&youmonst);
+
     init_objects();     /* must be before u_init() */
 
     role_init();        /* must be before init_dungeons(), u_init(), and
@@ -1490,7 +1414,7 @@ newgame(microseconds birthday, struct newgame_options *ngo)
     init_artifacts();
     u_init(birthday);   /* struct you must have some basic data for mklev to
                            work right */
-    mx_eyou_new(&youmonst); /* new player struct (mostly unused at the moment) */
+    mx_eyou_new(&youmonst); /* new player struct (mostly unused so far) */
     pantheon_init(TRUE);
 
     load_qtlist();      /* load up the quest text info */
