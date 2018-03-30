@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-01-19 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-27 */
 /* File opening code based on the xlogfile code. */
 /* Object-looping code based on makedefs.c */
 /* Concept based on Autospoil, by Cristan Szmajda
@@ -629,7 +629,7 @@ spoilartalign(struct artifact *art)
 static const char *
 spoilarteffects(struct artifact *art, unsigned long spfx, struct attack attk)
 {
-    return msgprintf("%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s %s",
+    return msgprintf("%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s %s",
                      ((spfx & SPFX_SEEK) ?
                       /* TODO: currently, the code checks SPFX_SEARCH for both
                          auto-searching and the +n search bonus and never
@@ -829,6 +829,7 @@ spoilattributes(const char *labelone, const xchar *attone,
 
 static const char *
 spoiladvancerow(const char *label, const struct RoleAdvance *adv) {
+    /* TODO: Update to new system */
     return msgprintf("<tr class=\"adv%s\"><th class=\"label\">%s:</th>"
                      "<td class=\"numeric advin\">"
                      "    <span class=\"advfix advinfix\">%d</span>"
@@ -839,8 +840,8 @@ spoiladvancerow(const char *label, const struct RoleAdvance *adv) {
                      "<td class=\"numeric advhi\">"
                      "    <span class=\"advfix advhifix\">%d</span>"
                      "    <span class=\"advrnd advhirnd\">+d%d</span></td>"
-                     "</tr>", label, label, adv->infix, adv->inrnd,
-                     adv->lofix, adv->lornd, adv->hifix, adv->hirnd);
+                     "</tr>", label, label, 0, 0,
+                     0, 0, 0, 0);
 }
 static const char *
 spoiladvance(const char *labelone, const struct RoleAdvance *advone,
@@ -1249,8 +1250,9 @@ makehtmlspoilers(void)
                     "    <td class=\"align\">%s</td></tr>\n",
                     races[i].filecode, races[i].noun, races[i].selfmask,
                     spoilgenders(races[i].allow),
-                    spoilattributes("min", races[i].attrmin, "max", races[i].attrmax),
-                    spoiladvance("HP", &races[i].hpadv, "Pw", &races[i].enadv, 0),
+                    spoilattributes("min", 0, "max", 0),
+                    spoiladvance("HP", &mons[races[i].num].hpadv, "Pw",
+                                 &mons[races[i].num].enadv, 0),
                     spoilraceroles(races[i].selfmask), spoilaligns(races[i].allow));
         }
         fprintf(outfile, "</tbody></table>\n");
@@ -1286,8 +1288,8 @@ makehtmlspoilers(void)
                     spoilgenders(roles[i].allow),
                     spoilattributes("base", roles[i].attrbase,
                                     "dist", roles[i].attrdist),
-                    spoiladvance("HP", &roles[i].hpadv, "Pw", &roles[i].enadv,
-                                 roles[i].xlev),
+                    spoiladvance("HP", &mons[roles[i].num].hpadv, "Pw",
+                                 &mons[roles[i].num].enadv, 0),
                     spoilroleraces(roles[i].allow),
                     spoilaligns(roles[i].allow),
                     spoilrolespellcasting(i), spoilquestart(i));

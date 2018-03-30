@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-12 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-27 */
 /* Copyright (c) Izchak Miller, 1992.                             */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -113,9 +113,17 @@ mk_mplayer_armor(struct monst *mon, short typ, enum rng rng)
     /* if not an artifact, try a bunch of times to assign object properties */
     int prop_tries = 10;
     if (!obj->oartifact &&
-        (obj->oclass == WEAPON_CLASS || obj->oclass == ARMOR_CLASS))
+        (obj->oclass == WEAPON_CLASS || obj->oclass == ARMOR_CLASS)) {
         while (!obj->oprops && prop_tries--)
             assign_oprops(mon->dlevel, obj, rng, TRUE);
+
+        if (obj->oclass == TOOL_CLASS && !is_weptool(obj))
+            obj->oprops = 0;
+        if (rn2(20) &&
+            (objects[obj->otyp].oc_magic ||
+             objects[obj->otyp].oc_oprop))
+            obj->oprops = 0;
+    }
 
     mpickobj(mon, obj, NULL);
 }
@@ -157,9 +165,14 @@ mk_mplayer(const struct permonst *ptr, struct level *lev, xchar x, xchar y,
         struct obj *otmp;
 
         mtmp->m_lev = rn2_on_rng(16, rng) + (special ? 15 : 1);
-        mtmp->mhp = mtmp->mhpmax =
-            5 * mtmp->m_lev + rn2_on_rng(mtmp->m_lev * 5 + 1, rng) + 10 +
-            (special ? rn2_on_rng(50, rng) : 0);
+        mtmp->dlevel = lev;
+        mtmp->mhp = 0;
+        mtmp->mhpmax = 0;
+
+        /* TODO: lategame players should have higher attributes than
+           the defaults */
+        initialize_mon_hp(mtmp, rng);
+
         if (special) {
             get_mplname(lev, mtmp, nam);
             christen_monst(mtmp, nam);
@@ -278,9 +291,12 @@ mk_mplayer(const struct permonst *ptr, struct level *lev, xchar x, xchar y,
             /* if not an artifact, try a bunch of times to assign object
                properties */
             int prop_tries = 10;
-            if (!otmp->oartifact)
-                while (!otmp->oprops && prop_tries--)
+            if (!otmp->oartifact) {
+                while (!otmp->oprops && prop_tries--) {
                     assign_oprops(lev, otmp, rng, TRUE);
+                    otmp->oprops &= ~opm_mercy;
+                }
+            }
 
             mpickobj(mtmp, otmp, NULL);
         }
@@ -288,9 +304,13 @@ mk_mplayer(const struct permonst *ptr, struct level *lev, xchar x, xchar y,
         /* give random intrinsics */
         int intrinsics[] = {
             POISON_RES, FIRE_RES, COLD_RES, SHOCK_RES, SLEEP_RES, DISINT_RES,
-            TELEPAT, INVIS, SEE_INVIS, PROTECTION /* blessed */
+            TELEPAT, INVIS, SEE_INVIS, PROTECTION, /* blessed */
+            TELEPORT, TELEPORT_CONTROL,
         };
         int i = 5 + rn2_on_rng(6, rng);
+        if (special)
+            i += 5;
+
         /* some will probably end up redundant, but keep it at that */
         while (i--)
             set_property(mtmp,
@@ -312,6 +332,8 @@ mk_mplayer(const struct permonst *ptr, struct level *lev, xchar x, xchar y,
                 mongets(mtmp, rn2_on_rng(5, rng) ? LUCKSTONE : LOADSTONE, rng);
             if (rn2_on_rng(4, rng)) /* unihorns are nice */
                 mongets(mtmp, UNICORN_HORN, rng);
+            if (rn2_on_rng(8, rng)) /* lizards are also nice */
+                xmongets(mtmp, CORPSE, PM_LIZARD, 0, rng);
 
             /* give armor */
             mk_mplayer_armor(mtmp, armor, rng);
@@ -325,15 +347,20 @@ mk_mplayer(const struct permonst *ptr, struct level *lev, xchar x, xchar y,
             if (rn2_on_rng(8, rng))
                 mk_mplayer_armor(mtmp, rnd_class(LOW_BOOTS,
                                                  LEVITATION_BOOTS, rng), rng);
-            m_dowear(mtmp, TRUE);
-
-            /* if the player lacks reflection for whatever reason,
-               maybe give some amulets */
-            if (!reflecting(mtmp) && rn2_on_rng(3, rng)) {
+            /* 50% reflection or life saving, 100% life saving if the playermon
+               already has reflection. 20% of getting several life saving ones
+               if they get one. */
+            if (!reflecting(mtmp) && rn2_on_rng(2, rng))
                 mk_mplayer_armor(mtmp, AMULET_OF_REFLECTION, rng);
-                for (i = rn2_on_rng(5, rng); i; i--)
-                    mk_mplayer_armor(mtmp, AMULET_OF_LIFE_SAVING, rng);
+            else {
+                mk_mplayer_armor(mtmp, AMULET_OF_LIFE_SAVING, rng);
+                if (!rn2_on_rng(5, rng)) {
+                    for (i = rn2_on_rng(5, rng); i; i--)
+                        mk_mplayer_armor(mtmp, AMULET_OF_LIFE_SAVING, rng);
+                }
             }
+
+            m_dowear(mtmp, TRUE);
 
             quan = rn2_on_rng(3, rng) ?
                 rn2_on_rng(3, rng) : rn2_on_rng(16, rng);

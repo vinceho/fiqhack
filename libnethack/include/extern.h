@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-05 */
+/* Last modified by Fredrik Ljungdahl, 2018-03-27 */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -160,7 +160,10 @@ extern void exerchk(void);
 extern void init_attr(int);
 extern void redist_attr(void);
 extern void adjabil(int, int);
+extern void update_hpen_attrib(struct monst *);
+extern int get_advmod_total(int, const struct monst *, boolean);
 extern int newhp(void);
+extern int mnewadv(struct monst *, boolean);
 extern schar acurr(const struct monst *, int);
 extern void adjalign(int);
 extern void calc_attr_bonus(void);
@@ -605,7 +608,8 @@ extern void newexplevel(void);
 extern void pluslvl(boolean);
 extern long rndexp(boolean);
 extern long newuexp(int);
-extern void initialize_mon_pw(struct monst *);
+extern void initialize_mon_hp(struct monst *, enum rng);
+extern void initialize_mon_pw(struct monst *, enum rng);
 extern const struct permonst *grow_up(struct monst *, struct monst *);
 
 /* ### explode.c ### */
@@ -906,6 +910,7 @@ extern const struct permonst *rndmonst(const d_level *, enum rng);
 extern const struct permonst *mkclass(const d_level *dlev, char, int, enum rng);
 extern int adj_lev(const d_level *dlev, const struct permonst *ptr);
 extern int mongets(struct monst *, int, enum rng);
+extern int xmongets(struct monst *, int, int, int, enum rng);
 extern int golemhp(int);
 extern boolean peace_minded(const struct permonst *);
 extern aligntyp malign(const struct monst *);
@@ -1274,7 +1279,7 @@ extern boolean poly_when_stoned(const struct permonst *);
 extern boolean resists_blnd(const struct monst *);
 extern boolean resists_slow(const struct monst *);
 extern boolean can_blnd(struct monst *, struct monst *, uchar, struct obj *);
-extern int mon_bon(struct monst *, int, int);
+extern int mon_bon(const struct monst *, int, int);
 extern boolean distant(const struct monst *);
 extern int searchbon(struct monst *);
 extern boolean ranged_attk(const struct permonst *);
@@ -1678,6 +1683,7 @@ extern boolean lookup_id_mapping(unsigned, unsigned *);
 /* ### role.c ### */
 
 extern short role_quest_artifact(int);
+extern struct RoleAdvance role_adv(int, boolean);
 extern int str2role(char *);
 extern int str2race(char *);
 extern int str2gend(char *);
@@ -1863,7 +1869,7 @@ extern void stealgold(struct monst *);
 extern void remove_worn_item(struct obj *, boolean);
 extern int steal(struct monst *, const char **);
 extern int mpickobj(struct monst *, struct obj *, struct obj **);
-extern void stealamulet(struct monst *);
+extern void stealamulet(struct monst *, struct monst *);
 extern void mdrop_obj(struct monst *, struct obj *, boolean);
 extern void mdrop_special_objs(struct monst *);
 extern void relobj(struct monst *, int, boolean);
