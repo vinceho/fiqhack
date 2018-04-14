@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-27 */
+/* Last modified by Fredrik Ljungdahl, 2018-04-05 */
 /* Copyright (c) Steve Creps, 1988.                               */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -1236,6 +1236,7 @@ extern void set_displacement(struct monst *);
 extern void poisontell(int);
 extern void poisoned(struct monst *, const char *, int, const char *, int);
 extern void m_respond(struct monst *);
+extern void punish_elbereth(void);
 extern void setmangry(struct monst *);
 extern void msetmangry(struct monst *, struct monst *);
 extern void sethostility(struct monst *, boolean, boolean);
@@ -1362,6 +1363,7 @@ extern struct obj *mgetargobj(const struct musable *, const char *, const char *
 extern boolean mgetargspell(const struct musable *, int *);
 extern int mon_choose_dirtarget(const struct monst *, struct obj *, coord *);
 extern int mon_choose_spectarget(struct musable *, struct obj *, coord *);
+extern boolean find_digger(struct monst *, struct musable *);
 extern boolean find_unlocker(struct monst *, struct musable *);
 extern boolean find_item(struct monst *, struct musable *);
 extern boolean find_item_obj(struct obj *, struct musable *, boolean, int);
@@ -1587,6 +1589,8 @@ extern boolean obj_affects(const struct monst *, struct monst *, struct obj *);
 extern boolean prop_wary(const struct monst *, struct monst *, enum youprop);
 extern int property_timeout(struct monst *, enum youprop);
 extern void decrease_property_timers(struct monst *);
+extern void set_suffocation(struct monst *);
+extern void unset_suffocation(struct monst *);
 extern boolean inc_timeout(struct monst *, enum youprop, int, boolean);
 extern boolean set_property(struct monst *, enum youprop, int, boolean);
 extern int update_property_polymorph(struct monst *, int);
@@ -1898,6 +1902,7 @@ extern boolean enexto(coord * cc, struct level *lev, xchar xx, xchar yy,
                       const struct permonst *mdat);
 extern boolean enexto_core(coord * cc, struct level *lev, xchar xx, xchar yy,
                            const struct permonst *mdat, unsigned entflags);
+extern boolean tele_jump_ok(int, int, int, int, struct level *);
 extern void teleds(int, int, boolean);
 extern boolean safe_teleds(boolean);
 extern boolean teleport_pet(struct monst *, boolean);

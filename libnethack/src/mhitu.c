@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-26 */
+/* Last modified by Fredrik Ljungdahl, 2018-04-05 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -220,6 +220,9 @@ expels(struct monst *mtmp,
     unstuck(mtmp);      /* ball&chain returned in unstuck() */
     mnexto(mtmp);
     newsym(u.ux, u.uy);
+    unset_suffocation(&youmonst);
+    mtmp->mcanmove = 0;
+    mtmp->mfrozen = 1;
     spoteffects(TRUE);
     /* to cover for a case where mtmp is not in a next square */
     if (um_dist(mtmp->mx, mtmp->my, 1))
@@ -1377,7 +1380,7 @@ hitmu(struct monst *mtmp, const struct attack *mattk, int ac_after_rnd)
         break;
     case AD_SLOW:
         hitmsg(mtmp, mattk);
-        if (!uncancelled || defends(AD_SLOW, uwep) || rn2(4) ||
+        if (cancelled(mtmp) || defends(AD_SLOW, uwep) || rn2(4) ||
             resists_slow(&youmonst))
             break;
         inc_timeout(&youmonst, SLOW, dmg, FALSE);
@@ -1668,7 +1671,7 @@ gulpmu(struct monst *mtmp, const struct attack *mattk)
 
     if (mtmp != u.ustuck)
         return 0;
-    if (u.uswldtim > 0)
+    if (u.uswldtim > 0 && mattk->adtyp == AD_DGST)
         u.uswldtim -= 1; /* what about slow digestion? */
 
     switch (mattk->adtyp) {
@@ -1796,6 +1799,9 @@ gulpmu(struct monst *mtmp, const struct attack *mattk)
     case AD_DISE:
         if (!diseasemu(mtmp->data, "You feel terribly sick."))
             tmp = 0;
+        break;
+    case AD_WRAP:
+        set_suffocation(&youmonst);
         break;
     default:
         tmp = 0;

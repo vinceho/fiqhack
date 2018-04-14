@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-26 */
+/* Last modified by Fredrik Ljungdahl, 2018-04-03 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -103,8 +103,14 @@ resolve_uim(enum u_interaction_mode uim, boolean weird_attack, xchar x, xchar y)
                 peaceful++;
             /* then fall through */
         case uim_attackhostile:
-            if (peaceful == 0)
-                return uia_attack;
+            if (peaceful == 0) {
+                if (!sengr_at("Elbereth", u.ux, u.uy))
+                    return uia_attack;
+                pline(msgc_cancelled,
+                      "Doing this would violate the sancticity of Elbereth!");
+                pline(msgc_hint,
+                      "Use forcefight (usually on 'F') to fight anyway.");
+            }
             /* otherwise fall through */
         case uim_pacifist:
             if (!weird_attack && peaceful == 2) {
@@ -1938,6 +1944,10 @@ domove(const struct nh_cmd_arg *arg, enum u_interaction_mode uim,
                 (!uswapwep || !uswapwep->cursed || !uswapwep->bknown))
                 doswapweapon(arg);
 
+            /* This takes care of the case where an engraved Elbereth vanishes
+               by the time you have done the hostile action. */
+            punish_elbereth();
+
             /* Try to perform the attack itself. We've already established that
                the player's willing to perform the attack. */
             enum attack_check_status attack_status =
@@ -3252,6 +3262,25 @@ losehp(int n, const char *killer)
 boolean
 xlosehp(int n, const char *killer, boolean interrupt)
 {
+    if (flags.easy && moves < 20000) {
+        int max_hp = u.uhpmax;
+        int cur_hp = u.uhp;
+        if (Upolyd && flags.polyinit_mnum != NON_PM) {
+            max_hp = u.mhmax;
+            cur_hp = u.mh;
+        }
+
+        int percent = (cur_hp * 100) / max_hp;
+        if (percent >= 50)
+            percent = 100;
+        else
+            percent *= 2;
+
+        n = (n * percent) / 100;
+        if (!n)
+            n++; /* sorry */
+    }
+
     /* taking damage wakes you up if sleep resistant. */
     if (resists_sleep(&youmonst))
         cancel_helplessness(hm_asleep, "You wake up.");
@@ -3291,9 +3320,7 @@ weight_cap(void)
     carrcap = 25 * (ACURR(A_STR) + ACURR(A_CON)) + 50;
     if (Upolyd) {
         /* consistent with can_carry() in mon.c */
-        if (youmonst.data->mlet == S_NYMPH)
-            carrcap = MAX_CARR_CAP;
-        else if (!youmonst.data->cwt)
+        if (!youmonst.data->cwt)
             carrcap = (carrcap * (long)youmonst.data->msize) / MZ_HUMAN;
         else if (!strongmonst(youmonst.data)
                  || (strongmonst(youmonst.data) &&
@@ -3336,6 +3363,9 @@ inv_weight_total(void)
 int
 minv_weight_total(const struct monst *mon)
 {
+    if (mon->data->mlet == S_NYMPH)
+        return 0;
+
     struct obj *obj = mon->minvent;
     int wt = 0;
 

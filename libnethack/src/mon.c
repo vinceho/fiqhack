@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-27 */
+/* Last modified by Fredrik Ljungdahl, 2018-04-05 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -564,6 +564,9 @@ mcalcmove(struct monst *mon)
         mon = u.usteed;
 
     int mmove = mon->data->mmove;
+
+    if (Is_waterlevel(m_mz(mon)) && swims(mon))
+        mmove *= 2;
 
     /* Note: slow's `+ 1' prevents slowed speed 1 getting reduced to 0;
        fast's `+ 2' prevents hasted speed 1 from becoming a no-op; both
@@ -1726,7 +1729,7 @@ nexttry:       /* eels prefer the water, but if there is no water nearby, they
                 (lavaok || !is_lava(mlevel, nx, ny))) {
                 int dispx, dispy;
                 boolean checkobj = OBJ_AT(nx, ny);
-                boolean elbereth_activation = checkobj;
+                boolean elbereth_activation = FALSE;
 
                 /* Displacement also displaces the Elbereth/scare monster, as
                    long as you are visible. */
@@ -3425,10 +3428,29 @@ msetmangry(struct monst *offender, struct monst *victim)
 }
 
 void
+punish_elbereth(void)
+{
+    if (!sengr_at("Elbereth", u.ux, u.uy))
+        return;
+
+    pline(msgc_badidea, "You feel like a hypocrite.");
+
+    adjalign(-5);
+
+    if (!Blind)
+        pline(msgc_consequence, "The engraving beneath you fades.");
+    del_engr_at(level, u.ux, u.uy);
+}
+
+void
 setmangry(struct monst *mtmp)
 {
     if (idle(mtmp))
         mtmp->mstrategy = st_none;
+
+    if (!flags.mon_moving)
+        punish_elbereth();
+
     if (!mtmp->mpeaceful)
         return;
     if (mtmp->mtame)
@@ -3438,11 +3460,9 @@ setmangry(struct monst *mtmp)
         if (master->mtame) {
             /* this is not ok */
             pline(msgc_badidea, "%s doesn't appreciate it...",
-                  Monnam(mtmp));
-            if (u.ualign.record >= 0)
-                adjalign(-1);
-            else if (Luck >= 0)
-                change_luck(-1);
+                  Monnam(master));
+            if (Luck >= 0)
+                change_luck(-5);
             else {
                 /* set master to peaceful so we can anger it */
                 sethostility(master, FALSE, TRUE);

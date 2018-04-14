@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-22 */
+/* Last modified by Fredrik Ljungdahl, 2018-04-04 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -104,7 +104,7 @@ onscary(int x, int y, const struct monst *mtmp)
     if (mx_eshk(mtmp) || mx_egd(mtmp) || mtmp->iswiz || blind(mtmp) ||
         mtmp->mpeaceful || mtmp->data->mlet == S_HUMAN || is_lminion(mtmp) ||
         mtmp->data == &mons[PM_ANGEL] || is_rider(mtmp->data) ||
-        (mtmp->data->geno & G_UNIQ))
+        (mtmp->data->geno & G_UNIQ) || Conflict)
         return FALSE;
 
     return (boolean) (sobj_at(SCR_SCARE_MONSTER, level, x, y)
@@ -741,6 +741,7 @@ m_move(struct monst *mtmp, int after)
     int chi;    /* could be schar except for stupid Sun-2 compiler */
     boolean can_tunnel = 0, can_open = 0, can_unlock = 0, doorbuster = 0;
     boolean setlikes = 0;
+    boolean can_dig = FALSE; /* magical digging */
     boolean avoid = FALSE;
     const struct permonst *ptr;
     schar mmoved = 0;   /* not strictly nec.: chi >= 0 will do */
@@ -749,6 +750,7 @@ m_move(struct monst *mtmp, int after)
     int omx = mtmp->mx, omy = mtmp->my;
     struct obj *mw_tmp;
     struct musable unlocker;
+    struct musable digger;
 
     if (mtmp->mtrapped) {
         int i = mintrap(mtmp);
@@ -794,6 +796,7 @@ m_move(struct monst *mtmp, int after)
     can_unlock = (mtmp->iswiz || is_rider(ptr));
     if (!can_unlock) /* Use muse logic to find knock, opening or keys */
         can_unlock = (can_open && find_unlocker(mtmp, &unlocker));
+    can_dig = find_digger(mtmp, &digger);
     doorbuster = is_giant(ptr);
     if (mtmp->wormno)
         goto not_special;
@@ -952,7 +955,7 @@ not_special:
         flag |= (ALLOW_WALL | ALLOW_ROCK);
     if (passes_bars(mtmp))
         flag |= ALLOW_BARS;
-    if (can_tunnel)
+    if (can_tunnel || can_dig)
         flag |= ALLOW_DIG;
     if (is_human(ptr) || ptr == &mons[PM_MINOTAUR])
         flag |= ALLOW_SSM;
@@ -1115,6 +1118,7 @@ not_special:
             if (mtmp->weapon_check >= NEED_PICK_AXE && mon_wield_item(mtmp))
                 return 3;
         }
+
         /* If ALLOW_MUXY is set, the monster thinks it's trying to attack you.
 
            In most cases, this codepath won't happen. There are two main AI
@@ -1196,6 +1200,19 @@ not_special:
 
         if (!m_in_out_region(mtmp, nix, niy))
             return 3;
+
+        if (can_dig &&
+            (closed_door(level, nix, niy) ||
+             ((IS_ROCK(level->locations[nix][niy].typ) ||
+               IS_TREE(level->locations[nix][niy].typ)) &&
+              !(level->locations[nix][niy].flags & W_NONDIGGABLE)))) {
+            digger.x = nix - mtmp->mx;
+            digger.y = niy - mtmp->my;
+            digger.z = 0;
+            if (use_item(&digger) == 1) /* died */
+                return 2;
+            return 3;
+        }
 
         /* Check for door at target location */
         /* TODO: simplify */
@@ -1431,6 +1448,9 @@ postmov:
                     OBJ_AT(mtmp->mx, mtmp->my) :
                     (is_pool(level, mtmp->mx, mtmp->my) &&
                      !Is_waterlevel(&u.uz));
+            if (mtmp->mpeaceful)
+                mtmp->mundetected = FALSE;
+
             newsym(mtmp->mx, mtmp->my);
         }
         if (mx_eshk(mtmp)) {

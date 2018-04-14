@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-28 */
+/* Last modified by Fredrik Ljungdahl, 2018-04-06 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -1197,7 +1197,7 @@ create_critters(int cnt, const struct permonst *mptr, int x, int y)
             x = c.x, y = c.y;
 
         mon = makemon(mptr, level, x, y,
-                      MM_CREATEMONSTER |
+                      MM_CREATEMONSTER | NO_MINVENT |
                       (you ? MM_CMONSTER_U : MM_CMONSTER_M) |
                       (you ? 0 : MM_ADJACENTOK));
         if (mon && cansuspectmon(mon))
@@ -1478,14 +1478,11 @@ rndmonst_inner(const d_level *dlev, char class, int flags, enum rng rng)
     zlevel = level_difficulty(dlev);
     minmlev = zlevel / 6;
 
-    /* Determine the level of the strongest monster to make. The strength
-       of the initial inhabitants of the level does not depend on the
-       player level; instead, we assume that the player level is 1 up to
-       D:10, and dlevel - 10 thereafter (to estimate a lower bound). */
+    int xl = u.ulevel;
     if (in_mklev)
-        maxmlev = (zlevel <= 10 ? (zlevel + 1) / 2 : zlevel - 5);
-    else
-        maxmlev = (zlevel + u.ulevel) / 2;
+        xl = (zlevel * 2) / 3;
+
+    maxmlev = (zlevel + xl) / 2;
 
     boolean hell = In_hell(dlev);
     boolean rogue = Is_rogue_level(dlev);
@@ -2512,7 +2509,7 @@ save_mon(struct memfile *mf, const struct monst *mon, const struct level *l)
 
     mwrite8(mf, mon->mhitinc);
     mwrite8(mf, mon->mdaminc);
-    mwrite8(mf, mon->mac);
+    mwrite8(mf, mon->mac); /* 1000 */
 
     if (mon->mextra)
         save_mextra(mf, mon);

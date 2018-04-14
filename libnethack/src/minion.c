@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-01-16 */
+/* Last modified by Fredrik Ljungdahl, 2018-04-04 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -18,9 +18,10 @@ msummon(struct monst *mon, const d_level *dlev)
     struct monst *mtmp;
 
     if (mon) {
+        d_level *mz = m_mz(mon);
         ptr = mon->data;
-        if (dlev->dnum != mon->dlevel->z.dnum ||
-            dlev->dlevel != mon->dlevel->z.dlevel)
+        if (dlev->dnum != mz->dnum ||
+            dlev->dlevel != mz->dlevel)
             impossible("dlev mismatch for monster in msummon");
         atyp = malign(mon);
     } else {
@@ -81,18 +82,20 @@ msummon(struct monst *mon, const d_level *dlev)
     }
 
     while (cnt > 0) {
-        mtmp = makemon(&mons[dtype], level, u.ux, u.uy,
-                       MM_CREATEMONSTER | MM_CMONSTER_M);
+        int x = u.ux;
+        int y = u.uy;
+        if (mon) {
+            x = m_mx(mon);
+            y = m_my(mon);
+        }
+        mtmp = makemon(&mons[dtype], level, x, y,
+                       MM_CREATEMONSTER | MM_CMONSTER_M | MM_ADJACENTOK);
         if (mtmp) {
             /* alignment should match the summoner */
             mtmp->maligntyp = atyp;
             /* peaceful state should match too */
-            if (mon) {
-                if (mon->mpeaceful)
-                    sethostility(mtmp, FALSE, TRUE);
-                if (mon->mtame)
-                    tamedog(mtmp, NULL);
-            }
+            if (mon)
+                mtamedog(mon, mtmp, NULL);
         }
         cnt--;
     }
@@ -209,8 +212,7 @@ demon_talk(struct monst *mtmp)
     cash = money_cnt(youmonst.minvent);
     /* don't bother with a custom RNG here, too much unpredictability is
        involved */
-    demand = (cash * (rnd(80) + 20 * Athome)) /
-        (100 * (1 + (sgn(u.ualign.type) == sgn(mtmp->data->maligntyp))));
+    demand = dice(50, 500);
 
     if (!demand) {      /* you have no gold */
         sethostility(mtmp, TRUE, TRUE);

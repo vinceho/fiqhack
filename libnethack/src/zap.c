@@ -1,5 +1,5 @@
 /* vim:set cin ft=c sw=4 sts=4 ts=8 et ai cino=Ls\:0t0(0 : -*- mode:c;fill-column:80;tab-width:8;c-basic-offset:4;indent-tabs-mode:nil;c-file-style:"k&r" -*-*/
-/* Last modified by Fredrik Ljungdahl, 2018-03-12 */
+/* Last modified by Fredrik Ljungdahl, 2018-04-05 */
 /* Copyright (c) Stichting Mathematisch Centrum, Amsterdam, 1985. */
 /* NetHack may be freely redistributed.  See license for details. */
 
@@ -329,18 +329,50 @@ bhitm(struct monst *magr, struct monst *mdef, struct obj *otmp, int range)
     case WAN_TELEPORTATION:
     case SPE_TELEPORT_AWAY:
         known = TRUE;
-        if ((wandlevel < P_EXPERT || selfzap) && tele_restrict(mdef))
+        if (tele_restrict(mdef))
             break; /* noteleport */
-        if (level->flags.noteleport) {
-            /* master proficiency can bypass noteleport */
-            if (mdef == &youmonst)
-                safe_teleds(FALSE);
-            else
-                rloc(mdef, TRUE);
+
+        /* Use ox/oy on the wand as a sentinel for having selected a destination
+           for the monster to go on Master */
+        if (wandlevel == P_MASTER &&
+            (!selfzap || magr == &youmonst)) {
+            /* just pick somewhere random if not the player for now... */
+            if (otmp->ox == COLNO || selfzap) {
+                do {
+                    otmp->ox = rn2(COLNO);
+                    otmp->oy = rn2(ROWNO);
+                } while (!tele_jump_ok(m_mx(mdef), m_my(mdef),
+                                       otmp->ox, otmp->oy, level));
+
+                if (magr == &youmonst) {
+                    coord tc;
+                    tc.x = m_mx(mdef);
+                    tc.y = m_my(mdef);
+                    pline(msgc_uiprompt, "Teleport%s where?",
+                          selfzap ? "" : " targets", mon_nam(mdef));
+                    if (getpos(&tc, FALSE, "the teleport target", FALSE) !=
+                        NHCR_CLIENT_CANCEL &&
+                        tele_jump_ok(m_mx(mdef), m_my(mdef),
+                                     tc.x, tc.y, level)) {
+                        otmp->ox = tc.x;
+                        otmp->oy = tc.y;
+                    }
+                }
+            }
+
+            if (mdef != &youmonst)
+                mnearto(mdef, otmp->ox, otmp->oy, FALSE);
+            else {
+                coord tc;
+                if (enexto(&tc, level, otmp->ox, otmp->oy, youmonst.data))
+                    teleds(tc.x, tc.y, FALSE);
+            }
+
             break;
         }
-        reveal_invis = !mon_tele(mdef, (level->flags.noteleport ?
-                                        FALSE : !!teleport_control(mdef)));
+
+        reveal_invis = !mon_tele(mdef, (wandlevel == P_MASTER ||
+                                        !!teleport_control(mdef)));
         break;
     case WAN_MAKE_INVISIBLE:
         if (wandlevel >= P_SKILLED && invisible(mdef))
@@ -1873,7 +1905,8 @@ bhito(struct obj *obj, struct obj *otmp)
             break;
         case WAN_TELEPORTATION:
         case SPE_TELEPORT_AWAY:
-            rloco(obj);
+            if (!level->flags.noteleport)
+                rloco(obj);
             break;
         case WAN_UNDEAD_TURNING:
         case SPE_TURN_UNDEAD:
@@ -2229,6 +2262,13 @@ zap_steed(struct obj *obj)
     case WAN_TELEPORTATION:
     case SPE_TELEPORT_AWAY:
         /* you go together */
+        if (getwandlevel(&youmonst, obj) == P_MASTER) {
+            mon_tele(&youmonst, TRUE);
+            if (obj->oclass != SPBOOK_CLASS)
+                tell_discovery(obj);
+            break;
+        }
+
         tele();
         if ((Teleport_control || (ox != u.ux && oy != u.uy)) &&
             obj->oclass != SPBOOK_CLASS)
@@ -2509,7 +2549,8 @@ zap_updown(struct monst *mon, struct obj *obj, schar dz)
                 break;
             case WAN_TELEPORTATION:
             case SPE_TELEPORT_AWAY:
-                rloc_engr(e);
+                if (!level->flags.noteleport)
+                    rloc_engr(e);
                 break;
             case SPE_STONE_TO_FLESH:
                 if (e->engr_type == ENGRAVE) {
@@ -2732,6 +2773,10 @@ bhit(struct monst *mon, int dx, int dy, int range, struct obj *obj)
     int y = m_my(mon);
     if (obj->otyp == EXPENSIVE_CAMERA)
         tsym = tmpsym_init(DISP_BEAM, dbuf_effect(E_MISC, E_flashbeam));
+
+    /* Used as sentinel for teleport destination for hit teleported monsters */
+    obj->ox = COLNO;
+    obj->oy = ROWNO;
 
     while (range-- > 0) {
         x += dx;
