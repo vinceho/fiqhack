@@ -30,6 +30,7 @@ delivermail(const char *from, const char *message)
 void
 checkformail(void)
 {
+#ifndef AIMAKE_BUILDOS_MSWin32
     if (program_state.followmode != FM_PLAY &&
         program_state.followmode != FM_WATCH)
         return;
@@ -94,6 +95,7 @@ checkformail(void)
 
     if (program_state.followmode == FM_PLAY)
         unlink(box);
+#endif
     return;
 }
 
